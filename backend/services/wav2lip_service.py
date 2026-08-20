@@ -142,6 +142,86 @@ def get_ffmpeg_exe() -> str:
         return shutil.which("ffmpeg") or "ffmpeg"
 
 
+def _subprocess_env() -> dict:
+    """Environment for inference.py, which shells out to a bare `ffmpeg`.
+
+    There is no ffmpeg on PATH on this machine -- imageio-ffmpeg ships one but
+    under a versioned filename, so expose a correctly-named copy in a cache
+    directory and prepend that.
+    """
+    env = os.environ.copy()
+    env["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    exe = Path(get_ffmpeg_exe())
+    if exe.is_file():
+        bin_dir = BACKEND_DIR / "static" / ".ffmpeg_bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        target = bin_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if not target.exists():
+            shutil.copy2(exe, target)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    return env
+
+
+def generate_lip_sync_video(
+    face_video_path: str | Path,
+    audio_path: str | Path,
+    output_path: str | Path,
+    batch_size: int = 8,
+    face_det_batch_size: int = 4,
+) -> str:
+    """Lip-sync a moving presenter clip, keeping the head and eyes alive.
+
+    generate_lip_sync() animates a single still: it detects the face once and
+    reuses that one crop for every output frame, so the result blinks at
+    nothing and never moves. Only the mouth changes, which reads as a
+    photograph with a puppet jaw rather than a person talking.
+
+    This runs the vendored inference.py over an actual video instead, which
+    re-detects per frame and composites the mouth back onto whatever the
+    presenter is doing at that moment -- so the blinks, head turns and shifts
+    already in the source footage survive. Frames wrap when the audio outlasts
+    the clip, which is why the registered avatars are prepared as seamless
+    loops.
+
+    GFPGAN restoration (lipsynchd.py's second pass) is skipped: the package
+    needs basicsr, which does not build against the installed torch.
+    """
+    face_path = Path(face_video_path).resolve()
+    aud_path = Path(audio_path).resolve()
+    out_path = Path(output_path).resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not face_path.exists():
+        raise FileNotFoundError(f"Presenter clip not found: {face_path}")
+    if not aud_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {aud_path}")
+
+    # inference.py writes its intermediates to a relative "temp/", so it has to
+    # run from the backend directory with that directory present.
+    (BACKEND_DIR / "temp").mkdir(parents=True, exist_ok=True)
+
+    print(f"\n[WAV2LIP-VIDEO] {face_path.name} + {aud_path.name} -> {out_path.name}", flush=True)
+
+    cmd = [
+        sys.executable,
+        str(WAV2LIP_DIR / "inference.py"),
+        "--checkpoint_path", str(DEFAULT_CHECKPOINT),
+        "--face", str(face_path),
+        "--audio", str(aud_path),
+        "--outfile", str(out_path),
+        "--wav2lip_batch_size", str(batch_size),
+        "--face_det_batch_size", str(face_det_batch_size),
+        "--nosmooth",
+    ]
+    subprocess.run(cmd, check=True, cwd=str(BACKEND_DIR), env=_subprocess_env())
+
+    if not out_path.exists() or out_path.stat().st_size < 1000:
+        raise RuntimeError(f"Wav2Lip produced no usable output at {out_path}")
+
+    print(f"[OK] [WAV2LIP-VIDEO COMPLETE] -> {out_path}", flush=True)
+    return str(out_path)
+
+
 def _create_lower_face_blend_mask(size: Tuple[int, int], split_ratio: float = 0.42, blur_radius: int = 15) -> np.ndarray:
     """Creates a vertical gradient alpha mask focused on the lower face/mouth articulation region."""
     w, h = size

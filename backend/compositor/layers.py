@@ -749,29 +749,6 @@ def resolve_audio_path(audio_path: Optional[str]) -> Optional[Path]:
     return None
 
 
-# Face Wav2Lip animates, most-preferred first. Resolved against the backend
-# directory rather than the process CWD, which is only "backend/" when the
-# server happens to have been started from there.
-#
-# anchor_source.png is deliberately NOT in this list: it carries visible "DD
-# INDIA" branding, and animating an apparent broadcaster of a real public
-# network to read government notices is the impersonation case the avatar
-# manifest rules out. These are generated faces belonging to no real person.
-LIPSYNC_FACE_CANDIDATES = (
-    "indian_man.png",
-    "anchor_m01_face.png",
-)
-
-
-def _lipsync_face_image() -> Optional[Path]:
-    avatars = Path(__file__).resolve().parent.parent / "assets" / "avatars"
-    for name in LIPSYNC_FACE_CANDIDATES:
-        candidate = avatars / name
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def resolve_presenter(
     lang: str,
     canvas_size: Tuple[int, int],
@@ -785,35 +762,42 @@ def resolve_presenter(
     caption_reserve = int(H * karaoke.BOTTOM_SAFE_PCT)
     layout = presenter.compute_layout(canvas_size, caption_reserve)
 
-    # 1. Dynamic Wav2Lip-HD Lip-Sync Synthesis
-    if use_wav2lip and scene is not None and scene.audio_path:
+    # 1. Dynamic Wav2Lip Lip-Sync Synthesis
+    #
+    # Driven by the registered avatar's own clip rather than a still, so the
+    # blinks and head movement already in the footage survive and only the
+    # mouth is replaced. Animating a photograph instead leaves the presenter
+    # staring without blinking for the whole video, which reads as broken even
+    # when the lip-sync itself is correct.
+    registered = avatar_registry.resolve(lang)
+    if use_wav2lip and scene is not None and scene.audio_path and registered is not None:
         audio_file = resolve_audio_path(scene.audio_path)
-        anchor_img = _lipsync_face_image()
-        if audio_file is not None and anchor_img is not None:
+        if audio_file is not None and Path(registered.file_path).is_file():
             try:
-                from services.wav2lip_service import generate_lip_sync
+                from services.wav2lip_service import generate_lip_sync_video
 
                 cache_dir = Path("static/avatars")
                 cache_dir.mkdir(parents=True, exist_ok=True)
-                lip_sync_mp4 = cache_dir / f"{audio_file.stem}_wav2lip.mp4"
+                lip_sync_mp4 = cache_dir / f"{audio_file.stem}_{registered.avatar_id}_w2l.mp4"
 
                 if not lip_sync_mp4.exists() or lip_sync_mp4.stat().st_size < 1000:
-                    generate_lip_sync(
-                        face_image_path=anchor_img,
+                    generate_lip_sync_video(
+                        face_video_path=registered.file_path,
                         audio_path=audio_file,
                         output_path=lip_sync_mp4,
-                        batch_size=16,
-                        enhance_face=True,
                     )
 
                 source = presenter.PresenterSource.load(
-                    str(lip_sync_mp4), layout, "AI-GENERATED PRESENTER", lang
+                    str(lip_sync_mp4), layout, registered.disclosure_label, lang
                 )
-                logger.info("Wav2Lip-HD presenter active for scene %s lang=%s", scene.scene_id, lang)
+                logger.info(
+                    "Wav2Lip presenter %r active for scene %s lang=%s",
+                    registered.avatar_id, scene.scene_id, lang,
+                )
                 return source, layout
             except Exception as e:
                 logger.warning(
-                    "Wav2Lip-HD synthesis failed (%s); falling back to static/registered avatar loop",
+                    "Wav2Lip synthesis failed (%s); falling back to the plain avatar loop",
                     e,
                     exc_info=True,
                 )
