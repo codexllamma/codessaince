@@ -30,6 +30,14 @@ PULSE_HZ = 0.8
 
 KENBURNS_RESAMPLE = Image.BILINEAR
 
+# Presenter-mode card borders: a dark stroke plus a thin inner highlight, the
+# same two-tone treatment karaoke.py already uses on the caption backing
+# (glassmorphism fill + a faint top-light rim), reused here so the frame
+# reads as one coherent broadcast graphic rather than two unrelated styles.
+CARD_BORDER_WIDTH = 3
+CARD_BORDER_COLOR = (8, 13, 26, 255)
+CARD_BORDER_HIGHLIGHT = (255, 255, 255, 40)
+
 
 def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
     hex_color = hex_color.lstrip("#")
@@ -40,6 +48,29 @@ def _with_alpha(layer: Image.Image, factor: float) -> Image.Image:
     r, g, b, a = layer.split()
     a = a.point(lambda v: int(v * min(max(factor, 0.0), 1.0)))
     return Image.merge("RGBA", (r, g, b, a))
+
+
+def _draw_card_border(
+    frame: Image.Image, box: Tuple[int, int, int, int], radius: int = presenter.PANEL_RADIUS
+) -> None:
+    """Dark rounded-rect stroke plus a faint inner highlight, drawn in place
+    on `frame`. Mirrors the presenter panel's own corner radius so a card
+    border always traces the panel it belongs to rather than clipping it.
+
+    Drawn as the very last compositing step for a card's region so the
+    border is always crisp on top — text and sprites sit inset from the
+    box edges already, so nothing later in the frame paints over it.
+    """
+    overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    l, t, r, b = box
+    draw.rounded_rectangle([l, t, r - 1, b - 1], radius=radius, outline=CARD_BORDER_COLOR, width=CARD_BORDER_WIDTH)
+    inset = CARD_BORDER_WIDTH
+    draw.rounded_rectangle(
+        [l + inset, t + inset, r - 1 - inset, b - 1 - inset],
+        radius=max(radius - inset, 0), outline=CARD_BORDER_HIGHLIGHT, width=1,
+    )
+    frame.alpha_composite(overlay) if frame.mode == "RGBA" else frame.paste(overlay, (0, 0), overlay)
 
 
 def build_background_source(
@@ -583,7 +614,8 @@ def make_frame_function(
     cx0, cy0, cx1, cy1 = pan_targets
     duration = scene.scene_duration_sec or 8.0
     total_frames = max(1, round(duration * VIDEO_FPS))
-    presenter_box = presenter_layout.panel_box[:2] if presenter_layout is not None else None
+    presenter_panel_box = presenter_layout.panel_box if presenter_layout is not None else None
+    presenter_box = presenter_panel_box[:2] if presenter_panel_box is not None else None
     content_box = presenter_layout.content_box if presenter_layout is not None else None
 
     # Base Sprites
@@ -690,6 +722,14 @@ def make_frame_function(
         sprite = caption_sprites.get(id(caption))
         if sprite is not None:
             sprite.paste_onto(frame)
+
+        # 9. Broadcast-style card borders — presenter panel and content area
+        # each read as a distinct framed card, the way a TV news split-screen
+        # does, rather than floating text over a bare background.
+        if presenter_panel_box is not None:
+            _draw_card_border(frame, presenter_panel_box)
+        if content_box is not None:
+            _draw_card_border(frame, content_box)
 
         return np.asarray(frame)
 
