@@ -1,0 +1,58 @@
+# Virtual Environments & Python Cache
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# Environment Variables & API Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Ephemeral Jobs & Worker Pipelines
+jobs/
+output/
+output_scene/
+temp/
+tmp/
+
+# Generated Media Deliverables
+*.mp4
+*.mp3
+*.wav
+*.aac
+*.srt
+*.vtt
+static/videos/*
+static/audio/*
+!static/videos/.gitkeep
+!static/audio/.gitkeep
+
+# Local Uploads & Raw PDFs
+uploads/*
+!uploads/.gitkeep
+*.pdf
+!samples/*.pdf
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
