@@ -17,8 +17,9 @@ from compositor import typography
 from models.schemas import WordTimestamp
 
 COLOR_SPOKEN = "#FACC15"
-COLOR_PENDING = "#F8FAFC"
-COLOR_PAST = "#94A3B8"
+COLOR_CORE_FACT = "#FDE047"
+COLOR_PAST = "#F8FAFC"
+COLOR_PENDING = "#94A3B8"
 
 SIDE_MARGIN_PX = 140
 BOTTOM_SAFE_PCT = 0.22
@@ -41,6 +42,7 @@ class CaptionLayout:
     words: List[_PlacedWord]
     canvas_size: Tuple[int, int]
     lang: str
+    box: Tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 def build_caption_layout(
@@ -59,9 +61,6 @@ def build_caption_layout(
     safe_top = H - int(H * bottom_safe_pct)
     line_height = BASE_FONT_SIZE + LINE_SPACING_PX
     space_width = typography.measure_text(" ", font)[0] or round(BASE_FONT_SIZE * 0.28)
-    # Reserved headroom beyond the space so an active word's 1.15x scale
-    # (applied around its own centre) never collides with its neighbour —
-    # sized generously since growth scales with word width, not font size.
     word_gap = space_width + round(BASE_FONT_SIZE * 0.45)
 
     def line_width(words: List[WordTimestamp]) -> int:
@@ -75,7 +74,7 @@ def build_caption_layout(
         candidate = lines[-1] + [wt]
         if lines[-1] and line_width(candidate) > max_width:
             if len(lines) == max_lines:
-                break  # remaining words simply don't get captioned this scene
+                break
             lines.append([wt])
         else:
             lines[-1] = candidate
@@ -86,39 +85,76 @@ def build_caption_layout(
     block_height = n_lines * line_height
     start_y = safe_top + (H - safe_top - block_height) // 2
 
+    min_x, max_x = W, 0
+    min_y, max_y = start_y, start_y + block_height
+
     for line_idx, line_words in enumerate(lines):
         y = start_y + line_idx * line_height
         x = side_margin_px + (max_width - line_widths[line_idx]) // 2  # centred line
+        if line_words:
+            min_x = min(min_x, x)
         for wt in line_words:
             placed.append(_PlacedWord(word=wt, x=x, y=y, line_index=line_idx))
-            x += typography.measure_text(wt.word, font)[0] + word_gap
+            w_advance = typography.measure_text(wt.word, font)[0]
+            max_x = max(max_x, x + w_advance)
+            x += w_advance + word_gap
 
-    return CaptionLayout(words=placed, canvas_size=canvas_size, lang=lang)
+    pad_x, pad_y = 32, 16
+    container_box = (
+        max(min_x - pad_x, side_margin_px // 2),
+        max(min_y - pad_y, safe_top),
+        min(max_x + pad_x, W - side_margin_px // 2),
+        min(max_y + pad_y, H - 24),
+    )
+
+    return CaptionLayout(words=placed, canvas_size=canvas_size, lang=lang, box=container_box)
 
 
 def _word_color(t: float, wt: WordTimestamp) -> str:
     if t < wt.start_sec:
         return COLOR_PENDING
     if t <= wt.end_sec:
-        return COLOR_SPOKEN
+        return COLOR_CORE_FACT if wt.is_core_fact else COLOR_SPOKEN
     return COLOR_PAST
 
 
 def render_caption_frame(layout: CaptionLayout, t: float) -> Image.Image:
-    """Render the full caption block for a given time t.
+    """Render the full caption block for a given time t with glassmorphism backdrop."""
+    from PIL import ImageDraw
 
-    Active-word emphasis is applied as an image-space scale around the
-    word's own centre (not a larger font size drawn in place) — scaling the
-    font in place would widen the glyph run and shove the next word's fixed
-    layout position, causing visible overlap between adjacent words.
-    """
     frame = Image.new("RGBA", layout.canvas_size, (0, 0, 0, 0))
+    if not layout.words:
+        return frame
+
+    # 1. Glassmorphism backing container
+    bx0, by0, bx1, by1 = layout.box
+    if bx1 > bx0 and by1 > by0:
+        draw = ImageDraw.Draw(frame)
+        # Frosted glass dark pill
+        draw.rounded_rectangle([bx0, by0, bx1, by1], radius=20, fill=(15, 23, 42, 210))
+        # Subtle light top border highlight
+        draw.rounded_rectangle([bx0, by0, bx1, by1], radius=20, outline=(255, 255, 255, 45), width=1)
+
     font = typography.load_font(layout.lang, "bold", BASE_FONT_SIZE)
 
     for pw in layout.words:
         color = _word_color(t, pw.word)
-        is_active = color == COLOR_SPOKEN
+        is_active = (color in (COLOR_SPOKEN, COLOR_CORE_FACT))
         word_text = pw.word.word
+
+        # 2. Active word glowing pill backing
+        if is_active:
+            left, top, right, bottom = typography.text_pixel_bbox(word_text, font)
+            if right > left and bottom > top:
+                glow_draw = ImageDraw.Draw(frame)
+                pill_l = pw.x + left - 12
+                pill_t = pw.y + top - 6
+                pill_r = pw.x + right + 12
+                pill_b = pw.y + bottom + 6
+                fill_color = (250, 204, 21, 65) if not pw.word.is_core_fact else (245, 158, 11, 95)
+                border_color = (250, 204, 21, 160) if not pw.word.is_core_fact else (245, 158, 11, 230)
+                glow_draw.rounded_rectangle([pill_l, pill_t, pill_r, pill_b], radius=10, fill=fill_color, outline=border_color, width=2)
+
         word_layer = typography.draw_text_layer(word_text, font, color, layout.canvas_size, (pw.x, pw.y))
 
         if is_active:

@@ -36,7 +36,7 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
           pause_after_ms=100,
       ),
       ScriptSegment(
-          type="core_fact",
+          type="core_fact" if scheme else "filler",
           text=f"Release of {scheme_name}",
           emphasis_level="strong",
           pause_after_ms=350,
@@ -126,7 +126,7 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
             pause_after_ms=50,
         ),
         ScriptSegment(
-            type="core_fact",
+            type="core_fact" if action else "filler",
             text=f"{act_val}",
             emphasis_level="moderate",
             pause_after_ms=250,
@@ -139,7 +139,7 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
             pause_after_ms=100,
         ),
         ScriptSegment(
-            type="core_fact",
+            type="core_fact" if deadline else "filler",
             text=f"{dl_val}.",
             emphasis_level="strong",
             pause_after_ms=400,

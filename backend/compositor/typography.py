@@ -213,6 +213,35 @@ def draw_text_layer(
     return layer
 
 
+def draw_text_with_shadow(
+    text: str,
+    font: Font,
+    color: str,
+    canvas_size: Tuple[int, int],
+    xy: Tuple[int, int],
+    shadow_color: str = "#000000",
+    shadow_offset: Tuple[int, int] = (2, 4),
+    shadow_alpha: int = 180,
+) -> Image.Image:
+    """Render text with a subtle drop shadow for crisp readability over motion backgrounds."""
+    layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    if not text:
+        return layer
+
+    sx, sy = xy[0] + shadow_offset[0], xy[1] + shadow_offset[1]
+    shadow_rgb = _to_rgb(shadow_color)
+    shadow_layer = draw_text_layer(text, font, shadow_color, canvas_size, (sx, sy))
+    # Apply shadow alpha
+    r, g, b, a = shadow_layer.split()
+    a = a.point(lambda v: int(v * (shadow_alpha / 255.0)))
+    shadow_layer = Image.merge("RGBA", (r, g, b, a))
+
+    text_layer = draw_text_layer(text, font, color, canvas_size, xy)
+    layer.alpha_composite(shadow_layer)
+    layer.alpha_composite(text_layer)
+    return layer
+
+
 def render_selftest(out_path: str = "assets/fonts/_selftest.png") -> Path:
     """One sample line per language. Missing font files render a visible
     placeholder line instead of crashing, so this stays runnable with only

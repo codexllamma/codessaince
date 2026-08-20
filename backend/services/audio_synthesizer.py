@@ -20,6 +20,9 @@ VOICE_MAPPING = {
 }
 
 
+SCENE_TAIL_PAD_SEC = 0.35
+
+
 def generate_fallback_timestamps(
     text: str, duration_sec: float, script_segments
 ) -> List[WordTimestamp]:
@@ -31,15 +34,22 @@ def generate_fallback_timestamps(
   for seg in script_segments:
     if seg.type == "core_fact":
       for token in seg.text.split():
-        fact_words.add(token.strip(".,;:!?()").lower())
+        fact_words.add(token.strip(".,;:!?()\"'[]{}").lower())
 
-  time_per_word = duration_sec / len(words)
+  # Weight duration by character length for natural pacing
+  weights = [max(len(w.strip(".,;:!?()\"'")), 2) for w in words]
+  total_weight = sum(weights)
+  spoken_dur = max(duration_sec - SCENE_TAIL_PAD_SEC, duration_sec * 0.9)
+
   timestamps: List[WordTimestamp] = []
+  current_time = 0.0
 
   for idx, w in enumerate(words):
-    start = round(idx * time_per_word, 3)
-    end = round((idx + 1) * time_per_word, 3)
-    clean_w = w.strip(".,;:!?()").lower()
+    w_dur = (weights[idx] / total_weight) * spoken_dur
+    start = round(current_time, 3)
+    end = round(current_time + w_dur, 3)
+    current_time += w_dur
+    clean_w = w.strip(".,;:!?()\"'[]{}").lower()
     timestamps.append(
         WordTimestamp(
             word=w,
@@ -88,9 +98,10 @@ async def synthesize_scene(
         )
 
   info = sf.info(str(file_path))
-  duration_sec = round(float(info.duration), 3)
+  # Natural breathing room after the last spoken word
+  duration_sec = round(float(info.duration) + SCENE_TAIL_PAD_SEC, 3)
 
-  # Fallback to linear distribution if TTS engine provided 0 boundary events
+  # Fallback to proportional distribution if TTS engine provided 0 boundary events
   if not raw_subtitles:
     raw_subtitles = generate_fallback_timestamps(
         scene.full_spoken_text, duration_sec, scene.script_segments
@@ -100,10 +111,10 @@ async def synthesize_scene(
     for seg in scene.script_segments:
       if seg.type == "core_fact":
         for token in seg.text.split():
-          fact_words.add(token.strip(".,;:!?()").lower())
+          fact_words.add(token.strip(".,;:!?()\"'[]{}").lower())
 
     for sub in raw_subtitles:
-      clean_sub = sub.word.strip(".,;:!?()").lower()
+      clean_sub = sub.word.strip(".,;:!?()\"'[]{}").lower()
       if clean_sub in fact_words:
         sub.is_core_fact = True
 

@@ -299,32 +299,17 @@ def generate_scenes(job_id: str):
   master_en = build_scenes_from_facts(job.extracted_facts)
   job.master_scenes_en = master_en
 
-  # 2. Localize for requested target languages (hi, ta, te)
+  # 2. Localize for requested target languages (hi, ta, te, bn, mr)
   job.localized_scenes = localize_scenes(master_en, job.target_languages)
 
   save_job(job)
   return job
 
+
 @app.put("/api/jobs/{job_id}/facts", response_model=NoticeVideoJob)
 def update_facts(job_id: str, payload: UpdateFactsRequest):
   job = load_job(job_id)
   job.extracted_facts = payload.extracted_facts
-  save_job(job)
-  return job
-
-
-@app.post("/api/jobs/{job_id}/generate-scenes", response_model=NoticeVideoJob)
-def generate_scenes(job_id: str):
-  job = load_job(job_id)
-
-  if not job.extracted_facts:
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Cannot generate scenes without extracted facts.",
-    )
-
-  master_en = build_scenes_from_facts(job.extracted_facts)
-  job.master_scenes_en = master_en
   save_job(job)
   return job
 

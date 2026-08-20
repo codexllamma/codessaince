@@ -1,9 +1,5 @@
-"""Top-level compositor orchestration (README §8.6): 5-layer canvas, per-scene
-rendering, job concatenation, and NVENC/libx264 fallback encoding.
-
-Only VisualAssetSelection.asset_type == "mesh_gradient" is implemented in
-this slice (README §10.2 fallback) — real B-roll video loops are out of
-scope until the asset tag-matcher (§10) exists.
+"""Top-level compositor orchestration (README §8.6): 5-layer canvas, dynamic
+theming, kinetic typography, audio-synchronized metric reactions, and NVENC/libx264 encoding.
 """
 
 from __future__ import annotations
@@ -12,13 +8,13 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 from compositor import _ffmpeg, karaoke, kenburns, presenter, typography
-from models.schemas import SceneDefinition, VisualAssetSelection
+from models.schemas import SceneDefinition, VisualAssetSelection, WordTimestamp
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +25,9 @@ VIDEO_FPS = 30
 ALERT_PILL_INSET = 96
 ALERT_PILL_HEIGHT = 56
 HEADLINE_GAP_BELOW_PILL = 28
-METRIC_CARD_SIZE = (720, 320)
+METRIC_CARD_SIZE = (760, 340)
 PULSE_HZ = 0.8
 
-# LANCZOS costs ~43ms per 1080p frame against ~28ms for BILINEAR, and on the
-# smooth gradients and video loops used as backgrounds the two differ by at
-# most 3/255 per channel. Raise this to LANCZOS for stills with fine detail
-# where the extra 15ms per frame is worth paying.
 KENBURNS_RESAMPLE = Image.BILINEAR
 
 
@@ -46,7 +38,7 @@ def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
 
 def _with_alpha(layer: Image.Image, factor: float) -> Image.Image:
     r, g, b, a = layer.split()
-    a = a.point(lambda v: int(v * factor))
+    a = a.point(lambda v: int(v * min(max(factor, 0.0), 1.0)))
     return Image.merge("RGBA", (r, g, b, a))
 
 
@@ -56,51 +48,37 @@ def build_background_source(
     canvas_h: int = VIDEO_HEIGHT,
     z_max: float = kenburns.Z_MAX_DEFAULT,
 ) -> Image.Image:
-    """Procedural tinted gradient background (README §10.2 fallback), pre-rendered
-    once at >= z_max * canvas size so Ken Burns can crop/pan without upscaling.
-
-    Video-loop and static-graphic assets are not composited yet. Rather than
-    refusing them, we degrade to the gradient — §10.2 already specifies that a
-    scene with no usable asset falls back to a tinted mesh gradient, which
-    "always looks intentional and never looks broken". The scene generator
-    emits video_loop paths for B-roll that is not in the repo yet, so this is
-    the live path until those assets are licensed and added.
-    """
-    if asset.asset_type != "mesh_gradient":
-        path = Path(asset.file_path) if asset.file_path else None
-        if path is not None and path.exists():
-            logger.warning(
-                "asset %s (%s) exists but %s compositing is not implemented yet; "
-                "using the mesh_gradient fallback",
-                asset.asset_id, asset.file_path, asset.asset_type,
-            )
-        else:
-            logger.info(
-                "asset %s (%s) not present on disk; using the mesh_gradient fallback (README §10.2)",
-                asset.asset_id, asset.file_path,
-            )
-
+    """Procedural multi-point glowing atmospheric gradient background."""
     w, h = round(z_max * canvas_w), round(z_max * canvas_h)
     accent = _hex_to_rgb(asset.accent_color)
-    dark = tuple(int(c * 0.15) for c in accent)
+    dark = tuple(int(c * 0.12) for c in accent)
+    deep_bg = (8, 14, 28)
 
     yy, xx = np.mgrid[0:h, 0:w]
     diag = (xx / w + yy / h) / 2.0
     gradient = np.empty((h, w, 3), dtype=np.float32)
     for c in range(3):
-        gradient[:, :, c] = dark[c] + (accent[c] - dark[c]) * diag
+        gradient[:, :, c] = deep_bg[c] + (dark[c] - deep_bg[c]) * diag
 
-    cx, cy = w * 0.3, h * 0.25
-    dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / (0.7 * max(w, h))
-    highlight = np.clip(1.0 - dist, 0, 1) ** 2 * 40
-    gradient += highlight[:, :, None]
+    # Light Orb 1: Primary Accent glow in upper-right / center
+    cx1, cy1 = w * 0.45, h * 0.3
+    dist1 = np.sqrt((xx - cx1) ** 2 + (yy - cy1) ** 2) / (0.75 * max(w, h))
+    highlight1 = np.clip(1.0 - dist1, 0, 1) ** 2.2
+    for c in range(3):
+        gradient[:, :, c] += highlight1 * accent[c] * 0.75
 
+    # Light Orb 2: Secondary soft ambient glow in bottom-left
+    cx2, cy2 = w * 0.8, h * 0.75
+    dist2 = np.sqrt((xx - cx2) ** 2 + (yy - cy2) ** 2) / (0.6 * max(w, h))
+    highlight2 = np.clip(1.0 - dist2, 0, 1) ** 2.0
+    for c in range(3):
+        gradient[:, :, c] += highlight2 * accent[c] * 0.45
+
+    # Subtle film grain / texture to eliminate 8-bit color banding
     rng = np.random.default_rng(abs(hash(asset.asset_id)) % (2**32))
-    gradient += rng.normal(0, 4, size=(h, w, 1))
+    gradient += rng.normal(0, 3.5, size=(h, w, 1))
 
     gradient = np.clip(gradient, 0, 255).astype(np.uint8)
-    # Mode is inferred from the (h, w, 3) uint8 shape; passing it explicitly is
-    # deprecated and removed in Pillow 13.
     img = Image.fromarray(gradient).convert("RGBA")
 
     if asset.dim_overlay_opacity > 0:
@@ -115,33 +93,46 @@ def _build_metric_card(
     lang: str,
     canvas_size: Tuple[int, int],
     content_box: Optional[Tuple[int, int, int, int]] = None,
+    glow_intensity: float = 0.0,
+    scale_factor: float = 1.0,
 ) -> Image.Image:
+    """Glassmorphism Metric Card with glowing borders and dynamic typography."""
     W, H = canvas_size
     card_w, card_h = METRIC_CARD_SIZE
     if content_box is None:
-        x0, y0 = (W - card_w) // 2, (H - card_h) // 2
+        x0, y0 = (W - card_w) // 2, (H - card_h) // 2 + 10
     else:
         cl, ct, cr, cb = content_box
-        # Shrink to fit the panel, then sit in its lower portion so the
-        # headline above keeps its room.
         card_w = min(card_w, (cr - cl) - 80)
         card_h = min(card_h, (cb - ct) // 2)
         x0 = cl + ((cr - cl) - card_w) // 2
         y0 = cb - card_h - 48
+
     accent = _hex_to_rgb(scene.asset.accent_color)
-    radius = 24
+    radius = 28
 
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    draw.rounded_rectangle([x0, y0, x0 + card_w, y0 + card_h], radius=radius, fill=(15, 23, 42, 200))
-    for i in range(6, 0, -1):
-        alpha = int(30 * (i / 6))
-        draw.rounded_rectangle(
-            [x0 - i, y0 - i, x0 + card_w + i, y0 + card_h + i],
-            radius=radius + i, outline=accent + (alpha,), width=2,
-        )
-    draw.rounded_rectangle([x0, y0, x0 + card_w, y0 + card_h], radius=radius, outline=accent + (255,), width=3)
 
+    # 1. Multi-layered Outer Glow Rings (intensifies when fact is actively spoken)
+    glow_layers = 10 if glow_intensity > 0.1 else 6
+    base_alpha = 45 if glow_intensity > 0.1 else 25
+    for i in range(glow_layers, 0, -1):
+        alpha = int((base_alpha + glow_intensity * 60) * (i / glow_layers))
+        draw.rounded_rectangle(
+            [x0 - i * 2, y0 - i * 2, x0 + card_w + i * 2, y0 + card_h + i * 2],
+            radius=radius + i * 2,
+            outline=accent + (min(alpha, 255),),
+            width=2,
+        )
+
+    # 2. Frosted Glass Dark Fill with inner specular highlight
+    draw.rounded_rectangle([x0, y0, x0 + card_w, y0 + card_h], radius=radius, fill=(13, 20, 38, 225))
+    draw.rounded_rectangle([x0, y0, x0 + card_w, y0 + card_h], radius=radius, outline=accent + (240,), width=3)
+    # Subtle top edge light
+    draw.line([x0 + radius, y0 + 1, x0 + card_w - radius, y0 + 1], fill=(255, 255, 255, 120), width=2)
+
+    # 3. Typography & Badges inside Metric Card
     vh = scene.visual_hierarchy
     metric_text = typography.enforce_budget(vh.highlight_metric or "", "highlight_metric", lang)
     sublabel_text = typography.enforce_budget(vh.highlight_sublabel or "", "highlight_sublabel", lang)
@@ -150,17 +141,45 @@ def _build_metric_card(
     metric_font = typography.load_font(lang, "bold", metric_size)
     sublabel_font = typography.load_font(lang, "regular" if lang == "en" else "bold", 32)
 
+    # Metric Value (e.g. ₹2,000 / 31st October 2026) with crisp drop shadow
     mw, mh = typography.measure_text(metric_text, metric_font)
-    layer.alpha_composite(typography.draw_text_layer(
-        metric_text, metric_font, "#F8FAFC", (W, H),
-        (x0 + (card_w - mw) // 2, y0 + card_h // 2 - mh - 6),
+    metric_color = "#FEF08A" if glow_intensity > 0.3 else "#F8FAFC"
+    layer.alpha_composite(typography.draw_text_with_shadow(
+        metric_text, metric_font, metric_color, (W, H),
+        (x0 + (card_w - mw) // 2, y0 + card_h // 2 - mh - 8),
+        shadow_offset=(0, 4), shadow_alpha=160,
     ))
+
+    # Sublabel with pill container
     if sublabel_text:
-        sw, _sh = typography.measure_text(sublabel_text, sublabel_font)
+        sw, sh = typography.measure_text(sublabel_text, sublabel_font)
+        sub_x = x0 + (card_w - sw) // 2
+        sub_y = y0 + card_h // 2 + 18
+        # Micro pill backing behind sublabel
+        draw.rounded_rectangle(
+            [sub_x - 16, sub_y - 4, sub_x + sw + 16, sub_y + sh + 8],
+            radius=12,
+            fill=(255, 255, 255, 18),
+            outline=(255, 255, 255, 35),
+            width=1,
+        )
         layer.alpha_composite(typography.draw_text_layer(
-            sublabel_text, sublabel_font, "#94A3B8", (W, H),
-            (x0 + (card_w - sw) // 2, y0 + card_h // 2 + 14),
+            sublabel_text, sublabel_font, "#E2E8F0", (W, H),
+            (sub_x, sub_y),
         ))
+
+    # Scale transform around center if animated
+    if abs(scale_factor - 1.0) > 0.005:
+        cx, cy = x0 + card_w // 2, y0 + card_h // 2
+        bbox = (x0 - 24, y0 - 24, x0 + card_w + 24, y0 + card_h + 24)
+        cropped = layer.crop(bbox)
+        new_w = round(cropped.width * scale_factor)
+        new_h = round(cropped.height * scale_factor)
+        scaled = cropped.resize((new_w, new_h), Image.LANCZOS)
+        res = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        res.alpha_composite(scaled, dest=(cx - new_w // 2, cy - new_h // 2))
+        return res
+
     return layer
 
 
@@ -170,34 +189,94 @@ def _build_alert_pill(
     canvas_size: Tuple[int, int],
     content_box: Optional[Tuple[int, int, int, int]] = None,
 ) -> Image.Image:
+    """Glowing Badge Pill with icon accent and sharp typography."""
     W, H = canvas_size
     badge_text = typography.enforce_budget(scene.visual_hierarchy.badge_tag, "badge_tag", lang)
     font = typography.load_font(lang, "bold", 26)
     tw, th = typography.measure_text(badge_text, font)
-    pad_x = 24
-    pill_w, pill_h = tw + 2 * pad_x, ALERT_PILL_HEIGHT
+    pad_x = 26
+    pill_w, pill_h = tw + 2 * pad_x + 12, ALERT_PILL_HEIGHT
 
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     accent = _hex_to_rgb(scene.asset.accent_color)
     if content_box is None:
-        x0, y0 = ALERT_PILL_INSET, ALERT_PILL_INSET
+        x0, y0 = ALERT_PILL_INSET, ALERT_PILL_INSET + 8
     else:
-        # The pill belongs to the fact card, so it moves inside the panel —
-        # at the canvas edge it would sit on top of the presenter, and above
-        # the panel it would run off the top of the frame.
         cl, ct, _cr, _cb = content_box
-        x0, y0 = cl + 40, ct + 24
-    draw.rounded_rectangle([x0, y0, x0 + pill_w, y0 + pill_h], radius=pill_h // 2, fill=accent + (235,))
+        x0, y0 = cl + 40, ct + 32
+
+    # Outer soft glow
+    for i in range(4, 0, -1):
+        draw.rounded_rectangle(
+            [x0 - i, y0 - i, x0 + pill_w + i, y0 + pill_h + i],
+            radius=(pill_h + i * 2) // 2,
+            outline=accent + (int(40 * (i / 4)),),
+            width=2,
+        )
+
+    # Solid accent pill with dark ink
+    draw.rounded_rectangle([x0, y0, x0 + pill_w, y0 + pill_h], radius=pill_h // 2, fill=accent + (245,))
+    # Mini blinking dot inside badge pill
+    dot_radius = 5
+    dot_x, dot_y = x0 + 18, y0 + pill_h // 2
+    draw.ellipse([dot_x - dot_radius, dot_y - dot_radius, dot_x + dot_radius, dot_y + dot_radius], fill=(11, 17, 32, 220))
+
     layer.alpha_composite(typography.draw_text_layer(
-        badge_text, font, "#0B1120", (W, H), (x0 + pad_x, y0 + (pill_h - th) // 2 - 4),
+        badge_text, font, "#0B1120", (W, H), (x0 + pad_x + 10, y0 + (pill_h - th) // 2 - 4),
     ))
     return layer
 
 
-def alert_pill_alpha(t: float, pulse_hz: float = 0.8) -> float:
-    """0.7-1.0 pulse (README §8.6)."""
-    return 0.85 + 0.15 * math.sin(2 * math.pi * pulse_hz * t)
+def _build_header_branding(
+    lang: str,
+    canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT),
+    content_box: Optional[Tuple[int, int, int, int]] = None,
+) -> Image.Image:
+    """Official Government Header with Tricolor accent ribbon and verified badge."""
+    W, H = canvas_size
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+
+    if content_box is None:
+        # 1. National Tricolor Ribbon across the top edge (y=0..6)
+        seg_w = W // 3
+        draw.rectangle([0, 0, seg_w, 6], fill=(255, 153, 51, 240))           # Saffron
+        draw.rectangle([seg_w, 0, seg_w * 2, 6], fill=(255, 255, 255, 240))    # White
+        draw.rectangle([seg_w * 2, 0, W, 6], fill=(19, 136, 8, 240))           # India Green
+
+        # 2. Official Authority Micro-Badge (top-right) localized per language
+        auth_labels = {
+            "en": "GOVERNMENT OF INDIA",
+            "hi": "भारत सरकार",
+            "mr": "भारत सरकार",
+            "ta": "இந்திய அரசு",
+            "te": "భారత ప్రభుత్వం",
+            "bn": "ভারত সরকার",
+        }
+        auth_label = auth_labels.get(lang, "GOVERNMENT OF INDIA")
+        badge_font = typography.load_font(lang, "bold", 20)
+        bw, bh = typography.measure_text(auth_label, badge_font)
+        bx0, by0 = W - bw - 130, 22
+        bw_total = bw + 42
+
+        draw.rounded_rectangle([bx0, by0, bx0 + bw_total, by0 + 36], radius=18, fill=(15, 23, 42, 170), outline=(255, 255, 255, 40), width=1)
+        draw.ellipse([bx0 + 10, by0 + 10, bx0 + 26, by0 + 26], fill=(59, 130, 246, 255))
+        draw.line([bx0 + 14, by0 + 18, bx0 + 17, by0 + 22], fill=(255, 255, 255, 255), width=2)
+        draw.line([bx0 + 17, by0 + 22, bx0 + 23, by0 + 14], fill=(255, 255, 255, 255), width=2)
+
+        layer.alpha_composite(typography.draw_text_layer(
+            auth_label, badge_font, "#E2E8F0", (W, H), (bx0 + 32, by0 + 6)
+        ))
+    else:
+        cl, ct, cr, _cb = content_box
+        box_w = cr - cl
+        seg_w = box_w // 3
+        draw.rectangle([cl, ct, cl + seg_w, ct + 4], fill=(255, 153, 51, 240))
+        draw.rectangle([cl + seg_w, ct, cl + seg_w * 2, ct + 4], fill=(255, 255, 255, 240))
+        draw.rectangle([cl + seg_w * 2, ct, cr, ct + 4], fill=(19, 136, 8, 240))
+
+    return layer
 
 
 def build_static_layers(
@@ -206,22 +285,13 @@ def build_static_layers(
     canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT),
     content_box: Optional[Tuple[int, int, int, int]] = None,
 ) -> Dict[str, Image.Image]:
-    """Layers built once per scene (not per frame): headline/subtext (layer 4),
-    metric card if METRIC_FOCUS (layer 3), alert pill base (layer 5).
-
-    `content_box` confines them to a sub-region — the right-hand panel when a
-    presenter occupies the left. Text is wrapped against the real available
-    width, so the narrower panel produces more lines or an ellipsis rather
-    than overrunning into the presenter.
-    """
+    """Base visual layers: headline/subtext, metric card, alert pill, branding."""
     W, H = canvas_size
     vh = scene.visual_hierarchy
     layers: Dict[str, Image.Image] = {}
 
-    # Type sizes step down in a presenter panel: a 76pt headline in a
-    # ~1100px column wraps to three lines and crowds the metric card.
     compact = content_box is not None
-    headline_size = 56 if compact else 76
+    headline_size = 58 if compact else 76
     subtext_size = 32 if compact else 38
 
     headline_text = typography.enforce_budget(vh.headline, "headline", lang)
@@ -232,26 +302,27 @@ def build_static_layers(
     if content_box is None:
         left_margin = 96
         max_text_width = W - 2 * left_margin
-        # Start below the alert pill rather than at a fixed fraction of the
-        # height. A proportional 12% put the headline's top at y=130 while the
-        # pill runs to y=152; Latin caps do not reach the top of the em box so
-        # the 22px overlap was invisible, but the Devanagari shirorekha does.
-        y = ALERT_PILL_INSET + ALERT_PILL_HEIGHT + HEADLINE_GAP_BELOW_PILL
+        y = ALERT_PILL_INSET + ALERT_PILL_HEIGHT + HEADLINE_GAP_BELOW_PILL + 8
     else:
         cl, ct, cr, _cb = content_box
         left_margin = cl + 40
         max_text_width = (cr - cl) - 80
-        # Below the pill, which now sits inside the panel at ct + 24.
-        y = ct + 24 + ALERT_PILL_HEIGHT + HEADLINE_GAP_BELOW_PILL
+        y = ct + 32 + ALERT_PILL_HEIGHT + HEADLINE_GAP_BELOW_PILL
 
     layer4 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     max_headline_lines = 3 if content_box is not None else 2
     for line in typography.wrap_text(headline_text, headline_font, max_text_width, max_lines=max_headline_lines):
-        layer4.alpha_composite(typography.draw_text_layer(line, headline_font, "#F8FAFC", (W, H), (left_margin, y)))
-        y += headline_font.size + 10
+        layer4.alpha_composite(typography.draw_text_with_shadow(
+            line, headline_font, "#F8FAFC", (W, H), (left_margin, y),
+            shadow_offset=(0, 4), shadow_alpha=170,
+        ))
+        y += headline_font.size + 12
     y += 12
     for line in typography.wrap_text(subtext_text, subtext_font, max_text_width, max_lines=2):
-        layer4.alpha_composite(typography.draw_text_layer(line, subtext_font, "#CBD5E1", (W, H), (left_margin, y)))
+        layer4.alpha_composite(typography.draw_text_with_shadow(
+            line, subtext_font, "#CBD5E1", (W, H), (left_margin, y),
+            shadow_offset=(0, 2), shadow_alpha=140,
+        ))
         y += subtext_font.size + 8
     layers["headline_subtext"] = layer4
 
@@ -259,20 +330,13 @@ def build_static_layers(
         layers["metric_card"] = _build_metric_card(scene, lang, canvas_size, content_box)
 
     layers["alert_pill"] = _build_alert_pill(scene, lang, canvas_size, content_box)
+    layers["branding"] = _build_header_branding(lang, canvas_size, content_box)
 
     return layers
 
 
 @dataclass(frozen=True)
 class _Sprite:
-    """A layer cropped to its non-transparent bounds, plus where to paste it.
-
-    Compositing a full 1920x1080 RGBA layer costs ~6ms even when only a
-    fraction of it is inked. Most layers occupy a band — the headline sits in
-    the upper third, captions in the bottom 22% — so pasting just the inked
-    region is several times cheaper for an identical result.
-    """
-
     image: Image.Image
     box: Tuple[int, int]
 
@@ -283,14 +347,19 @@ class _Sprite:
             return None
         return cls(image=layer.crop(bbox), box=(bbox[0], bbox[1]))
 
-    def paste_onto(self, frame: Image.Image) -> None:
-        frame.paste(self.image, self.box, self.image)
+    def paste_onto(self, frame: Image.Image, offset_y: int = 0) -> None:
+        x, y = self.box
+        frame.paste(self.image, (x, y + offset_y), self.image)
 
 
-# Discrete steps for the alert pill pulse. Re-deriving the alpha per frame cost
-# ~7ms in channel splitting; at 0.8Hz one cycle spans ~37 frames at 30fps, so
-# 24 precomputed steps is past the point of visible banding.
-_PILL_ALPHA_STEPS = 24
+def _get_core_fact_timing(subtitles: Optional[List[WordTimestamp]]) -> Optional[Tuple[float, float]]:
+    """Returns (start_sec, end_sec) for when core facts are spoken in the scene."""
+    if not subtitles:
+        return None
+    fact_subs = [s for s in subtitles if s.is_core_fact]
+    if not fact_subs:
+        return None
+    return (min(s.start_sec for s in fact_subs), max(s.end_sec for s in fact_subs))
 
 
 def make_frame_function(
@@ -303,62 +372,118 @@ def make_frame_function(
     resample: int = KENBURNS_RESAMPLE,
     presenter_source=None,
     presenter_layout=None,
+    lang: str = "en",
 ) -> Callable[[float], np.ndarray]:
+    """Kinetic, audio-synchronized frame compositor with animated entrances and progress bar."""
     W, H = canvas_size
     cx0, cy0, cx1, cy1 = pan_targets
-    duration = scene.scene_duration_sec
+    duration = scene.scene_duration_sec or 8.0
     presenter_box = presenter_layout.panel_box[:2] if presenter_layout is not None else None
+    content_box = presenter_layout.content_box if presenter_layout is not None else None
 
-    # Merge everything that never changes into one sprite: two composites
-    # become one, and the merge happens once instead of 30 times a second.
-    static_merged = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
-    if "metric_card" in static_layers:
-        static_merged.alpha_composite(static_layers["metric_card"])
-    static_merged.alpha_composite(static_layers["headline_subtext"])
-    static_sprite = _Sprite.from_layer(static_merged)
+    # Base Sprites
+    headline_sprite = _Sprite.from_layer(static_layers["headline_subtext"])
+    branding_sprite = _Sprite.from_layer(static_layers["branding"])
+    base_pill_sprite = _Sprite.from_layer(static_layers["alert_pill"])
+    base_metric_sprite = _Sprite.from_layer(static_layers.get("metric_card")) if "metric_card" in static_layers else None
 
-    pill_sprites = [
-        _Sprite.from_layer(_with_alpha(static_layers["alert_pill"], 0.85 + 0.15 * math.sin(2 * math.pi * i / _PILL_ALPHA_STEPS)))
-        for i in range(_PILL_ALPHA_STEPS)
-    ]
     caption_sprites = {id(img): _Sprite.from_layer(img) for _, img in caption_cache}
 
+    # Core fact audio timing window for active synchronization
+    core_fact_timing = _get_core_fact_timing(scene.subtitles)
+
+    accent_rgb = _hex_to_rgb(scene.asset.accent_color)
+
     def frame_function(t: float) -> np.ndarray:
+        # 1. Ken Burns background with smooth pan and zoom
         frame = kenburns.render_frame(
             bg_source, t, duration, W, H, cx0, cy0, cx1, cy1, resample=resample
         )
         if frame.mode != "RGB":
             frame = frame.convert("RGB")
 
-        # Presenter goes down before the text layers so the fact card and
-        # captions always read on top of it.
+        # 2. Split-screen Presenter if enabled
         if presenter_source is not None and presenter_box is not None:
             presenter_source.paste_onto(frame, presenter_box, t)
 
+        # 3. Top Scene Progress Bar (Animated timeline)
+        draw = ImageDraw.Draw(frame)
+        progress_val = min(max(t / duration, 0.0), 1.0)
+        bar_w = int(W * progress_val)
+        if bar_w > 0:
+            draw.rectangle([0, 6, bar_w, 10], fill=accent_rgb + (230,))
+            # Glowing playhead tip
+            draw.ellipse([bar_w - 4, 4, bar_w + 4, 12], fill=(255, 255, 255))
+
+        # 4. Top Government Branding
+        if branding_sprite is not None:
+            branding_sprite.paste_onto(frame)
+
+        # 5. Kinetic Alert Pill Entrance & Breathing Pulse
+        pill_p = min(max(t / 0.45, 0.0), 1.0)
+        pill_e = kenburns.ease_out_back(pill_p)
+        pill_offset_y = int((1.0 - pill_e) * -40)
+        if base_pill_sprite is not None and pill_p > 0.05:
+            # Subtle breathing pulse after entrance
+            pulse_factor = 0.90 + 0.10 * math.sin(2 * math.pi * PULSE_HZ * t)
+            pill_img = _with_alpha(base_pill_sprite.image, pill_p * pulse_factor)
+            frame.paste(pill_img, (base_pill_sprite.box[0], base_pill_sprite.box[1] + pill_offset_y), pill_img)
+
+        # 6. Kinetic Headline & Subtext Staggered Entrance
+        text_p = min(max((t - 0.1) / 0.5, 0.0), 1.0)
+        if headline_sprite is not None and text_p > 0.05:
+            text_e = kenburns.ease_out_cubic(text_p)
+            text_offset_y = int((1.0 - text_e) * 30)
+            text_img = _with_alpha(headline_sprite.image, text_p)
+            frame.paste(text_img, (headline_sprite.box[0], headline_sprite.box[1] + text_offset_y), text_img)
+
+        # 7. AUDIO-SYNCHRONIZED METRIC CARD POP & GLOW
+        if "metric_card" in static_layers:
+            card_p = min(max((t - 0.3) / 0.55, 0.0), 1.0)
+            if card_p > 0.05:
+                card_e = kenburns.ease_out_back(card_p)
+                card_offset_y = int((1.0 - card_e) * 45)
+
+                # Check if core fact is currently being spoken
+                is_fact_spoken = False
+                glow_int = 0.0
+                card_scale = 1.0
+
+                if core_fact_timing is not None:
+                    cf_start, cf_end = core_fact_timing
+                    if cf_start - 0.15 <= t <= cf_end + 0.25:
+                        is_fact_spoken = True
+                        rel_t = t - cf_start
+                        pulse_osc = 0.5 + 0.5 * math.sin(2 * math.pi * 2.2 * rel_t)
+                        glow_int = float(pulse_osc)
+                        card_scale = 1.04
+
+                # Dynamic Metric Card rendering during active fact delivery
+                if is_fact_spoken:
+                    active_card_layer = _build_metric_card(
+                        scene, lang, canvas_size, content_box,
+                        glow_intensity=glow_int, scale_factor=card_scale,
+                    )
+                    card_sprite = _Sprite.from_layer(active_card_layer)
+                    if card_sprite is not None:
+                        card_sprite.paste_onto(frame, offset_y=card_offset_y)
+                elif base_metric_sprite is not None:
+                    card_img = _with_alpha(base_metric_sprite.image, card_p)
+                    frame.paste(card_img, (base_metric_sprite.box[0], base_metric_sprite.box[1] + card_offset_y), card_img)
+
+        # 8. Modern Karaoke Subtitles (bottom layer)
         caption = karaoke.get_caption_frame_for_time(caption_cache, t)
         sprite = caption_sprites.get(id(caption))
         if sprite is not None:
             sprite.paste_onto(frame)
-        if static_sprite is not None:
-            static_sprite.paste_onto(frame)
 
-        pill = pill_sprites[int(t * PULSE_HZ * _PILL_ALPHA_STEPS) % _PILL_ALPHA_STEPS]
-        if pill is not None:
-            pill.paste_onto(frame)
-        # Already RGB — pasting with a mask blends in place, so no final
-        # convert() copy of two million pixels is needed.
         return np.asarray(frame)
 
     return frame_function
 
 
 def resolve_audio_path(audio_path: Optional[str]) -> Optional[Path]:
-    """Locate a scene's audio file on disk, or None if it isn't there.
-
-    The synthesis stage records audio_path as a web-style URL served by the
-    API ("/static/audio/scene_1_en.mp3"), while fixtures use ordinary
-    filesystem paths. Accept both rather than making callers normalise.
-    """
+    """Locate a scene's audio file on disk, or None if it isn't there."""
     if not audio_path:
         return None
     direct = Path(audio_path)
@@ -371,13 +496,7 @@ def resolve_audio_path(audio_path: Optional[str]) -> Optional[Path]:
 
 
 def resolve_presenter(lang: str, canvas_size: Tuple[int, int]):
-    """(PresenterSource, PresenterLayout) for `lang`, or (None, None).
-
-    Returning None is the normal case until an avatar is installed, and the
-    caller then renders the full-width layout. A presenter that fails to load
-    is logged and skipped rather than failing the render — a broken avatar
-    should cost you the presenter, not the video.
-    """
+    """(PresenterSource, PresenterLayout) for `lang`, or (None, None)."""
     from services import avatar_registry
 
     avatar = avatar_registry.resolve(lang)
@@ -418,6 +537,7 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
     frame_fn = make_frame_function(
         scene, static_layers, caption_cache, bg_source, pan_targets, canvas_size,
         presenter_source=presenter_source, presenter_layout=presenter_layout,
+        lang=lang,
     )
     clip = VideoClip(frame_function=frame_fn, duration=scene.scene_duration_sec).with_fps(VIDEO_FPS)
 
@@ -436,13 +556,6 @@ _nvenc_unavailable = False
 
 
 def _write_with_fallback(clip, out_path: str, codec_pref: str) -> None:
-    """Encode with NVENC when it works, else libx264 (README §15).
-
-    An `ffmpeg -encoders` probe is not sufficient to detect a working NVENC:
-    the encoder can be compiled in and still fail at runtime if the installed
-    driver is older than the build's SDK. So we attempt it and remember the
-    failure — otherwise a 6-language job pays six doomed encode attempts.
-    """
     global _nvenc_unavailable
 
     if codec_pref == "h264_nvenc" and not _nvenc_unavailable:
@@ -469,8 +582,6 @@ def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc",
     _ffmpeg.ensure_ffmpeg_binary_env()
     from moviepy import concatenate_videoclips
 
-    # Resolved once per job: the presenter loop is the same for every scene in
-    # a language, and decoding it per scene would repeat the whole cost.
     presenter_source, presenter_layout = resolve_presenter(lang, canvas_size)
 
     clips = [
@@ -481,9 +592,6 @@ def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc",
     try:
         _write_with_fallback(final, out_path, codec_pref)
     finally:
-        # Windows keeps the reader subprocess and the audio file handle open
-        # until the clip is closed; a leaked handle blocks the next render of
-        # the same job from overwriting its own output.
         for clip in (final, *clips):
             try:
                 clip.close()

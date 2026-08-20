@@ -15,7 +15,8 @@ CORE_PACKAGES = [
 
 
 def run_enforced_check():
-  print("[INFO] Initializing environment validation...")
+  print("[INFO] Initializing environment " \
+  "validation...")
 
   # 1. Enforce Exact Python Version
   current_version = sys.version_info[:2]

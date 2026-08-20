@@ -19,6 +19,18 @@ def ease(p: float) -> float:
     return p * p * (3 - 2 * p)
 
 
+def ease_out_cubic(p: float) -> float:
+    """Fast-out, gentle settle curve for smooth card & text entrances."""
+    p = min(max(p, 0.0), 1.0)
+    return 1.0 - (1.0 - p) ** 3
+
+
+def ease_out_back(p: float, s: float = 1.70158) -> float:
+    """Spring-like overshoot curve for lively metric pops."""
+    p = min(max(p, 0.0), 1.0)
+    return 1.0 + (s + 1.0) * ((p - 1.0) ** 3) + s * ((p - 1.0) ** 2)
+
+
 def progress(t: float, duration: float) -> float:
     if duration <= 0:
         return 1.0

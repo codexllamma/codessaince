@@ -35,7 +35,7 @@ def render_scene_card_image(scene: SceneDefinition, lang: str = "en") -> np.ndar
   frame = frame.crop((0, 0, *canvas)).convert("RGBA")
 
   static_layers = layers.build_static_layers(scene, lang, canvas)
-  for key in ("metric_card", "headline_subtext", "alert_pill"):
+  for key in ("branding", "metric_card", "headline_subtext", "alert_pill"):
     if key in static_layers:
       frame.alpha_composite(static_layers[key])
 
