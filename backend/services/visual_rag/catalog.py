@@ -76,6 +76,12 @@ class AssetRecord:
         "media_type": self.media_type,
         "category": self.category,
         "title": self.title,
+        # Carried through even though embedding_text() already folded it into
+        # the indexed document: a record handed back by a vector query is
+        # otherwise missing the one field written in the same register as the
+        # narration, and a caller re-ranking those hits would be scoring
+        # against less text than the index itself used.
+        "description": self.description,
         "tags": ",".join(self.tags),
         "domains": ",".join(self.domains),
         "licence": self.licence,
@@ -98,6 +104,7 @@ class AssetRecord:
         media_type=meta.get("media_type", "image"),
         category=meta.get("category", ""),
         title=meta.get("title", ""),
+        description=meta.get("description", ""),
         tags=_split("tags"),
         domains=_split("domains"),
         licence=meta.get("licence", ""),
