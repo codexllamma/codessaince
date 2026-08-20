@@ -198,22 +198,61 @@ def generate_lip_sync_video(
 
     # inference.py writes its intermediates to a relative "temp/", so it has to
     # run from the backend directory with that directory present.
-    (BACKEND_DIR / "temp").mkdir(parents=True, exist_ok=True)
+    temp_dir = BACKEND_DIR / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Every path handed to inference.py is relative to the backend directory,
+    # and never absolute. inference.py builds its ffmpeg calls by string
+    # formatting without quoting --
+    #     'ffmpeg -y -i {} -strict -2 {}'.format(args.audio, 'temp/temp.wav')
+    # -- so an absolute path containing a space (this checkout lives under
+    # "practice web dev2") is split into separate arguments and ffmpeg fails
+    # with a file it cannot open. The relative paths inside the repo have no
+    # spaces, which sidesteps the quoting bug without patching vendored code.
+    def _relative(path: Path, copy_name: str) -> str:
+        try:
+            rel = path.relative_to(BACKEND_DIR)
+            if " " not in str(rel):
+                return str(rel).replace("\\", "/")
+        except ValueError:
+            pass
+        staged = temp_dir / copy_name
+        shutil.copy2(path, staged)
+        return f"temp/{copy_name}"
+
+    face_rel = _relative(face_path, f"face{face_path.suffix}")
+
+    # Convert to wav here rather than letting inference.py shell out for it,
+    # so the conversion is a properly quoted argument list.
+    wav_rel_path = temp_dir / f"{aud_path.stem}_16k.wav"
+    subprocess.run(
+        [get_ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(aud_path),
+         "-ar", "16000", "-ac", "1", str(wav_rel_path)],
+        check=True,
+    )
+    audio_rel = f"temp/{wav_rel_path.name}"
+
+    out_rel = _relative(out_path, f"out{out_path.suffix}")
 
     print(f"\n[WAV2LIP-VIDEO] {face_path.name} + {aud_path.name} -> {out_path.name}", flush=True)
 
     cmd = [
         sys.executable,
         str(WAV2LIP_DIR / "inference.py"),
-        "--checkpoint_path", str(DEFAULT_CHECKPOINT),
-        "--face", str(face_path),
-        "--audio", str(aud_path),
-        "--outfile", str(out_path),
+        "--checkpoint_path", str(DEFAULT_CHECKPOINT.relative_to(BACKEND_DIR)).replace("\\", "/"),
+        "--face", face_rel,
+        "--audio", audio_rel,
+        "--outfile", out_rel,
         "--wav2lip_batch_size", str(batch_size),
         "--face_det_batch_size", str(face_det_batch_size),
         "--nosmooth",
     ]
     subprocess.run(cmd, check=True, cwd=str(BACKEND_DIR), env=_subprocess_env())
+
+    # If the destination had to be staged under temp/, put it where asked.
+    produced = (BACKEND_DIR / out_rel).resolve()
+    if produced != out_path and produced.exists():
+        shutil.move(str(produced), str(out_path))
 
     if not out_path.exists() or out_path.stat().st_size < 1000:
         raise RuntimeError(f"Wav2Lip produced no usable output at {out_path}")
