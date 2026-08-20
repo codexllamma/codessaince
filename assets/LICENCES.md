@@ -12,3 +12,27 @@ Indic script fonts (NotoSansDevanagari-Bold.ttf, NotoSansTamil-Bold.ttf, NotoSan
 ## B-roll video loops
 
 None bundled yet. This slice uses procedural mesh-gradient backgrounds (README §10.2 fallback) in place of licensed B-roll footage.
+
+## Presenter avatars
+
+None bundled yet. `assets/avatars/manifest.json` is empty, so the presenter
+layout is inactive and rendering uses the normal full-width composition.
+
+Every avatar added must record its licence here **and** in the manifest, and
+must declare a `source` of `synthetic`, `licensed_stock`, or
+`consented_performer`. `services/avatar_registry.py` refuses to load any other
+origin at parse time.
+
+Animating a real, identifiable official's likeness is not permitted. That is a
+deepfake of a named public figure in their official capacity, and no
+disclosure label makes it acceptable for government communications — README
+§21 already forbids cloning a named official's voice, and a face carries more
+weight than a voice, not less.
+
+Every avatar entry also requires a `disclosure_label`, which the compositor
+renders on screen for as long as the presenter is visible. There is no code
+path that draws an unlabelled synthetic presenter.
+
+| Field | Value |
+|---|---|
+| `assets/avatars/*.mp4` | none bundled |
