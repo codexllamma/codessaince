@@ -3,7 +3,26 @@
 How to check out the project on a fresh machine and drive the whole pipeline
 (job → facts → scenes → translation → audio → video) with logs you can read.
 
-Everything below was run on Windows 11 / Python 3.12 against commit `f8f645d`.
+Everything below was run on Windows 11 / Python 3.12 against commit `80d33ff`.
+
+## Repository layout
+
+The backend moved under `backend/` when the frontend landed. **Every command in
+this document runs from `backend/`** unless it says otherwise.
+
+```
+codessaince/
+├── backend/          <- the pipeline; run everything from here
+│   ├── server.py         FastAPI app
+│   ├── compositor/       video composition (§8.6)
+│   ├── services/         scenes, translation, TTS, rendering, avatars
+│   ├── models/schemas.py shared data contracts
+│   ├── assets/           fonts, avatars
+│   └── tests/
+└── frontend/
+    ├── VaaniReach/           Vite + React app
+    └── my-react-router-app/  React Router scaffold
+```
 
 ---
 
@@ -49,7 +68,7 @@ identical, just slower.
 
 ```powershell
 git clone https://github.com/codexllamma/codessaince.git
-cd codessaince
+cd codessaince\backend
 
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -57,6 +76,10 @@ py -3.12 -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.lock
 ```
+
+The venv lives inside `backend/` alongside `requirements.lock`, which keeps it
+next to the code that needs it and out of the frontend's way. `backend/.gitignore`
+already excludes it.
 
 `requirements.lock` is the authority. It includes `uharfbuzz` and `freetype-py`,
 which are **required for correct Indic text** — see section 6.
@@ -90,13 +113,14 @@ python test_font.py
 
 Writes `static/font_tests/test_card_<lang>.png` for all six languages.
 
-Unit tests, including shaping regressions:
+Unit tests, including shaping and presenter regressions:
 
 ```powershell
 python -m pytest tests/ -q
 ```
 
-Expect `36 passed`.
+Expect `54 passed`. A batch of `DeprecationWarning` lines about NumPy array
+shapes comes from inside MoviePy's ffmpeg reader, not from this project.
 
 ---
 
@@ -155,6 +179,16 @@ python test_multilingual.py
 Renders `en`, `hi`, `ta`, `te`. **Roughly 2-3 minutes per language** at 1080p
 without NVENC, so be patient — the server log is the real progress indicator.
 
+### Same thing with progress on screen
+
+```powershell
+python test_step_by_step.py
+```
+
+Drives the same sequence with a spinner and elapsed time per stage, and allows
+up to 60 minutes for rendering. Prefer this one if you are watching it run —
+the plain scripts look identical whether they are working or wedged.
+
 ### Step through it by hand
 
 ```powershell
@@ -192,6 +226,10 @@ for one language.
 
 ## 6. Where the output and logs live
 
+All paths are relative to `backend/`, and are created there by whichever
+process writes them — so they follow the working directory you launched the
+server from.
+
 | Path | Contents |
 |---|---|
 | `static/videos/<job>_final_<lang>.mp4` | final videos |
@@ -199,6 +237,7 @@ for one language.
 | `jobs/<job_id>.json` | full job state — facts, scenes, subtitles, telemetry |
 | `assets/fonts/_selftest.png` | font and shaping check |
 | `static/font_tests/` | per-language cards |
+| `out/` | fixture renders from `scripts/render_fixture_demo.py` |
 | `logs/server.log` | server log, if you used `Tee-Object` |
 
 Inspect a finished video:
@@ -270,9 +309,16 @@ and 137MB cached, adding roughly 1ms (3%) per rendered frame.
 A font file is missing from `assets/fonts/`. All six ship in the repo, so this
 usually means an incomplete clone (they are binary files).
 
-**`ImportError` on `uvicorn server:app`**
-Run from the repo root with the venv active. `server.py` imports `compositor/`
-and `models/` as top-level packages.
+**`ImportError` / `ModuleNotFoundError` on `uvicorn server:app` or pytest**
+You are almost certainly in the wrong directory. Run from `backend/`, not the
+repo root — `server.py` imports `compositor`, `models` and `services` as
+top-level packages, and they only resolve with `backend/` as the working
+directory. This is the most common breakage after the `backend/` move.
+
+**Output appears somewhere unexpected**
+Same cause. `static/`, `jobs/`, `logs/` and `out/` are created relative to the
+working directory, so launching from the repo root scatters them there instead
+of under `backend/`.
 
 **Render is very slow**
 Expected without NVENC. ~2-3 min per language at 1080p. Check the server log
