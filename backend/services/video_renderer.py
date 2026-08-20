@@ -14,11 +14,13 @@ machine that has it, and silently produces tofu everywhere else.
 """
 
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
 from compositor import layers
 from models.schemas import NoticeVideoJob, SceneDefinition
+from services.srt_generator import export_srt_file
 
 OUTPUT_DIR = Path("static/videos")
 
@@ -43,7 +45,7 @@ def render_scene_card_image(scene: SceneDefinition, lang: str = "en") -> np.ndar
 
 
 def render_notice_video(job: NoticeVideoJob, lang: str = "en") -> str:
-  """Render every scene for `lang` into a single MP4. Returns the served URL."""
+  """Render every scene for `lang` into a single MP4 and export its external SRT file."""
   scenes = (
       job.master_scenes_en if lang == "en" else job.localized_scenes.get(lang, [])
   )
@@ -54,6 +56,12 @@ def render_notice_video(job: NoticeVideoJob, lang: str = "en") -> str:
   output_filename = f"{job.job_id}_final_{lang}.mp4"
   output_path = OUTPUT_DIR / output_filename
 
+  # 1. Render final MP4
   layers.render_job(scenes, lang, str(output_path))
+
+  # 2. Generate external broadcast SRT file
+  srt_filename = f"{job.job_id}_final_{lang}.srt"
+  srt_path = OUTPUT_DIR / srt_filename
+  export_srt_file(scenes, srt_path)
 
   return f"/static/videos/{output_filename}"

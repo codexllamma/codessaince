@@ -106,6 +106,7 @@ export interface NoticeVideoJob {
   telemetry?: PipelineTelemetry;
   officer_approved: boolean;
   final_video_paths: Record<string, string>;
+  final_srt_paths?: Record<string, string>;
 }
 
 export const api = {
@@ -204,8 +205,9 @@ export const api = {
   },
 
   // 6. Render Video Broadcast
-  renderVideo: async (jobId: string): Promise<NoticeVideoJob> => {
-    const res = await fetch(`${BASE_URL}/api/jobs/${jobId}/render`, { method: 'POST' });
+  renderVideo: async (jobId: string, lang?: string): Promise<NoticeVideoJob> => {
+    const url = lang ? `${BASE_URL}/api/jobs/${jobId}/render?lang=${lang}` : `${BASE_URL}/api/jobs/${jobId}/render`;
+    const res = await fetch(url, { method: 'POST' });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
@@ -230,6 +232,12 @@ export const api = {
 
   // Resolve static audio URL
   getAudioUrl: (relativePath: string) => {
+    if (!relativePath) return '';
+    return relativePath.startsWith('http') ? relativePath : `${BASE_URL}${relativePath}`;
+  },
+
+  // Resolve static SRT URL
+  getSrtUrl: (relativePath: string) => {
     if (!relativePath) return '';
     return relativePath.startsWith('http') ? relativePath : `${BASE_URL}${relativePath}`;
   },
