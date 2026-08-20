@@ -2,11 +2,11 @@ import subprocess
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-input_video = str(BASE_DIR / "assets" / "avatars" / "female_raw.mp4")
-output_video = str(BASE_DIR / "assets" / "avatars" / "indic_official_f01.mp4")
+input_video = str(BASE_DIR / "assets" / "avatars" / "male_raw.mp4")
+output_video = str(BASE_DIR / "assets" / "avatars" / "indic_official_m01.mp4")
 
 print(f"Reading: {input_video}")
-print("Creating seamless ping-pong loop... (this will take a few seconds)")
+print("Creating seamless ping-pong loop for the male anchor...")
 
 ffmpeg_cmd = [
     "ffmpeg", "-y", 
@@ -20,7 +20,5 @@ ffmpeg_cmd = [
     output_video
 ]
 
-# Run FFmpeg through Python so it uses the correct environment paths
 subprocess.run(ffmpeg_cmd, check=True)
-
 print(f"\n[SUCCESS] Seamless loop saved to: {output_video}")

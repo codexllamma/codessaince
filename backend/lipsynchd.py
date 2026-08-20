@@ -14,9 +14,9 @@ WAV2LIP_DIR = BASE_DIR / "services" / "wav2lip"
 # ==========================
 # CONFIG & PATHS
 # ==========================
-INPUT_VIDEO = str(BASE_DIR / "assets" / "avatars" / "indic_official_f01.mp4")
+INPUT_VIDEO = str(BASE_DIR / "assets" / "avatars" / "indic_official_m01.mp4")
 INPUT_AUDIO = str(BASE_DIR / "static" / "audio" / "test_audio.wav")
-OUTPUT_VIDEO = str(BASE_DIR / "static" / "videos" / "hd_lipsync_output_fem.mp4")
+OUTPUT_VIDEO = str(BASE_DIR / "static" / "videos" / "hd_lipsync_output_male.mp4")
 
 # Replaced AVI temp variables with a single MP4 temp since FFmpeg handles it flawlessly
 TEMP_RAW_MP4 = str(BASE_DIR / "static" / "temp_raw_w2l.mp4")
