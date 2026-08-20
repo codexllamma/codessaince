@@ -829,11 +829,13 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
 
     # Choreograph the presenter against this scene's word timings. Built per
     # scene against the same decoded frames, so it costs no extra decoding.
+    # Keyed off p_source, not the presenter_source parameter: render_job now
+    # passes None deliberately so each scene resolves its own lip-synced clip.
     presenter_track = None
-    if presenter_source is not None and getattr(presenter_source, "clip_path", None) is not None:
+    if p_source is not None and getattr(p_source, "clip_path", None) is not None:
         presenter_track = gestures.build_track(
             scene.subtitles, scene.template_type,
-            scene.scene_duration_sec, presenter_source.clip_path,
+            scene.scene_duration_sec, p_source.clip_path,
         )
 
     bg_source = build_background_source(scene.asset, *canvas_size)
@@ -847,7 +849,7 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
 
     frame_fn = make_frame_function(
         scene, static_layers, caption_cache, bg_source, pan_targets, canvas_size,
-        presenter_source=presenter_source, presenter_layout=presenter_layout,
+        presenter_source=p_source, presenter_layout=presenter_layout,
         presenter_track=presenter_track, lang=lang,
     )
     clip = VideoClip(frame_function=frame_fn, duration=scene.scene_duration_sec).with_fps(VIDEO_FPS)

@@ -67,3 +67,43 @@ def test_fixture_scenes_satisfy_media_invariant():
     for scene in get_fixture_scenes():
         assert isinstance(scene, SceneDefinition)
         assert scene.audio_path and scene.scene_duration_sec and scene.subtitles
+
+
+def test_per_scene_presenter_reaches_the_frame(monkeypatch):
+    """render_job resolves the presenter per scene (each scene has its own
+    audio, so each gets its own lip-synced clip) and passes presenter_source
+    as None to say so. The source render_scene_clip resolves must actually be
+    the one composited — otherwise the narrator silently vanishes from every
+    render while every layer around it still looks correct.
+    """
+    scene = get_fixture_scenes()[0]
+
+    class _Layout:
+        content_box = (0, 0, 10, 10)
+        panel_box = (0, 0, 10, 10)
+
+    class _Source:
+        clip_path = None
+        pasted = False
+
+        def paste_onto(self, frame, box, t, track=None):
+            _Source.pasted = True
+
+    monkeypatch.setattr(layers, "resolve_presenter", lambda *a, **k: (_Source(), _Layout()))
+
+    captured = {}
+    real_make = layers.make_frame_function
+
+    def _spy(*args, **kwargs):
+        captured["presenter_source"] = kwargs.get("presenter_source")
+        return real_make(*args, **kwargs)
+
+    monkeypatch.setattr(layers, "make_frame_function", _spy)
+
+    layers.render_scene_clip(
+        scene, "en", 0, (320, 180), presenter_source=None, presenter_layout=_Layout()
+    )
+
+    assert captured["presenter_source"] is not None, (
+        "presenter resolved for the scene was dropped before compositing"
+    )
