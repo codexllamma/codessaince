@@ -60,6 +60,21 @@ def test_static_graphic_is_fitted_to_kenburns_headroom(tmp_path):
     assert img.size == HEADROOM
 
 
+def test_static_graphic_content_reaches_the_frame(tmp_path):
+    """The still itself must survive, not just its dimensions.
+
+    Asserting only on size passes just as happily when build_background_source
+    ignores the asset and returns the procedural gradient — which is exactly
+    how the B-roll still path was once dropped without a test going red.
+    """
+    _write_still(tmp_path, "magenta.png", colour=(255, 0, 255))
+    img = layers.build_background_source(
+        _asset(tmp_path, "magenta.png", "static_graphic", dim_overlay_opacity=0.0)
+    )
+    arr = np.asarray(img.convert("RGB")).reshape(-1, 3).mean(axis=0)
+    assert arr[0] > 200 and arr[2] > 200 and arr[1] < 60, f"still ignored; got {arr}"
+
+
 def test_static_graphic_is_dimmed(tmp_path):
     """Undimmed B-roll destroys caption contrast (§8.6 layer 1)."""
     _write_still(tmp_path, "bright.png", colour=(255, 255, 255))

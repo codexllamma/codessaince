@@ -16,10 +16,15 @@ from PIL import Image
 from compositor import typography
 from models.schemas import WordTimestamp
 
+# README Appendix D: caption.spoken / caption.pending / caption.past.
+# Pending is the bright one and past is the dim one, so the eye reads ahead
+# and spoken text recedes. Inverting these two (dim pending, bright past)
+# gives the other common karaoke convention, where text fills in and stays
+# lit; it reads well too, but it is not what the spec's token table says.
 COLOR_SPOKEN = "#FACC15"
 COLOR_CORE_FACT = "#FDE047"
-COLOR_PAST = "#F8FAFC"
-COLOR_PENDING = "#94A3B8"
+COLOR_PENDING = "#F8FAFC"
+COLOR_PAST = "#94A3B8"
 
 SIDE_MARGIN_PX = 140
 BOTTOM_SAFE_PCT = 0.22

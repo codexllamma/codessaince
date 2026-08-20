@@ -48,7 +48,34 @@ def build_background_source(
     canvas_h: int = VIDEO_HEIGHT,
     z_max: float = kenburns.Z_MAX_DEFAULT,
 ) -> Image.Image:
-    """Procedural multi-point glowing atmospheric gradient background."""
+    """The still image Ken Burns pans across for this scene.
+
+    Handles static_graphic (a real B-roll still) and mesh_gradient (the §10.2
+    procedural fallback: a multi-point glowing atmospheric gradient). Anything
+    present on disk is used; anything missing degrades to the gradient, which
+    §10.2 specifies "always looks intentional and never looks broken" — a scene
+    should never fail for want of an asset.
+
+    Video loops are handled separately by build_background_video, because a
+    clip cannot be reduced to one image.
+    """
+    if asset.asset_type == "static_graphic":
+        image = _load_asset_image(asset, canvas_w, canvas_h, z_max)
+        if image is not None:
+            return _apply_dim_overlay(image, asset.dim_overlay_opacity)
+    elif asset.asset_type == "video_loop":
+        # The caller asks for a still even for a clip, as a fallback for when
+        # the video cannot be opened. Use its first frame if we can.
+        image = _first_video_frame(asset, canvas_w, canvas_h, z_max)
+        if image is not None:
+            return _apply_dim_overlay(image, asset.dim_overlay_opacity)
+
+    if asset.asset_type != "mesh_gradient":
+        logger.info(
+            "asset %s (%s, %s) unavailable; using the mesh_gradient fallback (README §10.2)",
+            asset.asset_id, asset.file_path or "<no path>", asset.asset_type,
+        )
+
     w, h = round(z_max * canvas_w), round(z_max * canvas_h)
     accent = _hex_to_rgb(asset.accent_color)
     dark = tuple(int(c * 0.12) for c in accent)
