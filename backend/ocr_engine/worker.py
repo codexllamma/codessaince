@@ -24,22 +24,103 @@ def parse_args():
     parser.add_argument("--min_conf", default=0.5, type=float, help="Minimum confidence threshold")
     return parser.parse_args()
 
+def _build_ocr(lang: str, use_gpu: bool):
+    """PaddleOCR across the 2.x/3.x API break.
+
+    3.x dropped use_gpu and show_log (device= replaces the former) and renamed
+    use_angle_cls to use_textline_orientation. Trying the new signature first
+    and falling back to the old one keeps this working on either, rather than
+    pinning the whole project to one PaddleOCR line.
+    """
+    # The doc-orientation classifier and UVDoc unwarping model are off: a
+    # rasterised PDF page is already upright and flat, so they only add load
+    # time, and on paddle 3.3.1 their oneDNN kernels abort the whole run with
+    # "ConvertPirAttribute2RuntimeAttribute not support". enable_mkldnn=False
+    # keeps the detection and recognition models off that same backend.
+    attempts = [
+        {"lang": lang, "use_textline_orientation": False,
+         "use_doc_orientation_classify": False, "use_doc_unwarping": False,
+         "enable_mkldnn": False,
+         "device": "gpu" if use_gpu else "cpu"},
+        {"lang": lang, "use_angle_cls": False,
+         "use_gpu": use_gpu, "show_log": False},
+    ]
+    last_err = None
+    for kwargs in attempts:
+        try:
+            return PaddleOCR(**kwargs)
+        except Exception as err:
+            last_err = err
+    raise last_err
+
+
+def _normalize(result, min_conf: float):
+    """Flatten either result format into (text, confidence, box) triples.
+
+    2.x returns [[ [box, (text, conf)], ... ]]; 3.x returns a list of result
+    objects carrying parallel rec_texts / rec_scores / poly arrays.
+    """
+    out = []
+    if not result:
+        return out
+
+    first = result[0]
+
+    # 3.x: mapping-like with parallel arrays.
+    texts = None
+    if hasattr(first, "get") or isinstance(first, dict):
+        try:
+            texts = first["rec_texts"]
+        except Exception:
+            texts = None
+
+    if texts is not None:
+        try:
+            scores = first["rec_scores"]
+        except Exception:
+            scores = [1.0] * len(texts)
+        polys = None
+        for key in ("rec_polys", "dt_polys", "rec_boxes"):
+            try:
+                polys = first[key]
+                break
+            except Exception:
+                continue
+        for i, text in enumerate(texts):
+            conf = float(scores[i]) if i < len(scores) else 1.0
+            if conf < min_conf:
+                continue
+            if polys is not None and i < len(polys):
+                box = [[float(x), float(y)] for x, y in polys[i]]
+            else:
+                box = [[0.0, 0.0]] * 4
+            out.append((str(text).strip(), conf, box))
+        return out
+
+    # 2.x: nested [box, (text, conf)] lines.
+    if first is None:
+        return out
+    for line in first:
+        box, (text, conf) = line[0], line[1]
+        if float(conf) >= min_conf:
+            out.append((str(text).strip(), float(conf),
+                        [[float(x), float(y)] for x, y in box]))
+    return out
+
+
+def _run(ocr, img_np):
+    """3.x prefers predict(); 2.x only has ocr(..., cls=)."""
+    if hasattr(ocr, "predict"):
+        return ocr.predict(img_np)
+    return ocr.ocr(img_np, cls=False)
+
+
 def extract_pdf(pdf_path: str, lang: str, dpi: int, use_gpu: bool, min_conf: float):
     # Initialize PaddleOCR with graceful fallback
     try:
-        ocr = PaddleOCR(
-            use_angle_cls=False,
-            lang=lang,
-            use_gpu=use_gpu,
-            show_log=False,
-        )
+        ocr = _build_ocr(lang, use_gpu)
     except Exception:
-        ocr = PaddleOCR(
-            use_angle_cls=False,
-            lang=lang,
-            use_gpu=False,
-            show_log=False,
-        )
+        ocr = _build_ocr(lang, False)
         use_gpu = False
 
     doc = fitz.open(pdf_path)
@@ -57,38 +138,28 @@ def extract_pdf(pdf_path: str, lang: str, dpi: int, use_gpu: bool, min_conf: flo
 
         # Run inference with dynamic fallback
         try:
-            result = ocr.ocr(img_np, cls=False)
+            result = _run(ocr, img_np)
         except Exception as ocr_err:
             if use_gpu:
-                ocr = PaddleOCR(
-                    use_angle_cls=False,
-                    lang=lang,
-                    use_gpu=False,
-                    show_log=False,
-                )
+                ocr = _build_ocr(lang, False)
                 use_gpu = False
-                result = ocr.ocr(img_np, cls=False)
+                result = _run(ocr, img_np)
             else:
                 raise ocr_err
 
         page_blocks = []
-        if result and result[0] is not None:
-            for line in result[0]:
-                box = line[0]           # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-                text, conf = line[1]
+        for text, conf, box in _normalize(result, min_conf):
+            page_blocks.append({
+                "text": text,
+                "confidence": round(conf, 4),
+                "bounding_box": box,
+                "top": box[0][1],
+                "left": box[0][0]
+            })
 
-                if float(conf) >= min_conf:
-                    page_blocks.append({
-                        "text": text.strip(),
-                        "confidence": round(float(conf), 4),
-                        "bounding_box": box,
-                        "top": box[0][1],
-                        "left": box[0][0]
-                    })
-
-            # Natural reading order sort: primary = Top (Y), secondary = Left (X)
-            # Grouping by roughly similar Y (within 10px) ensures multi-column stability
-            page_blocks.sort(key=lambda b: (round(b["top"] / 12) * 12, b["left"]))
+        # Natural reading order sort: primary = Top (Y), secondary = Left (X)
+        # Grouping by roughly similar Y (within 10px) ensures multi-column stability
+        page_blocks.sort(key=lambda b: (round(b["top"] / 12) * 12, b["left"]))
 
         extracted_pages.append({
             "page_number": page_idx + 1,
