@@ -17,11 +17,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from functools import lru_cache
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 from PIL import Image, ImageDraw
 
 from compositor import typography
+
+# Presenter motion is a subtle idle loop — blinks and small head movement —
+# so sampling it below the output frame rate is not visible, and it halves
+# the frames held in memory. Raise it if a clip has fast motion.
+PRESENTER_SAMPLE_FPS = 15
 
 logger = logging.getLogger(__name__)
 
@@ -71,22 +78,37 @@ def compute_layout(
     return PresenterLayout(panel_box=panel_box, content_box=content_box)
 
 
-def _rounded_mask(size: Tuple[int, int], radius: int) -> Image.Image:
+@lru_cache(maxsize=8)
+def panel_mask(size: Tuple[int, int], radius: int = PANEL_RADIUS) -> Image.Image:
+    """Rounded-corner alpha for the panel. Identical every frame, so it is
+    built once and reused as a shared paste mask rather than baked into each
+    frame's alpha channel — that keeps cached frames at 3 bytes per pixel."""
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rounded_rectangle([0, 0, size[0] - 1, size[1] - 1], radius=radius, fill=255)
     return mask
 
 
-def fit_presenter_frame(frame: Image.Image, panel_size: Tuple[int, int]) -> Image.Image:
-    """Cover-fit a presenter frame into the panel, centre-cropped and rounded."""
+def fit_presenter_frame(frame: Image.Image, panel_size: Tuple[int, int], rounded: bool = True) -> Image.Image:
+    """Cover-fit a presenter frame into the panel, centre-cropped.
+
+    With `rounded=False` the result is RGB and the caller is expected to paste
+    it through `panel_mask()`; that is the cheap path used per frame.
+    """
     pw, ph = panel_size
     scale = max(pw / frame.width, ph / frame.height)
-    resized = frame.resize((max(round(frame.width * scale), pw), max(round(frame.height * scale), ph)), Image.BILINEAR)
+    resized = frame.resize(
+        (max(round(frame.width * scale), pw), max(round(frame.height * scale), ph)), Image.BILINEAR
+    )
 
     left = (resized.width - pw) // 2
     top = (resized.height - ph) // 2
-    cropped = resized.crop((left, top, left + pw, top + ph)).convert("RGBA")
-    cropped.putalpha(_rounded_mask((pw, ph), PANEL_RADIUS))
+    cropped = resized.crop((left, top, left + pw, top + ph))
+
+    if not rounded:
+        return cropped.convert("RGB")
+
+    cropped = cropped.convert("RGBA")
+    cropped.putalpha(panel_mask((pw, ph)))
     return cropped
 
 
@@ -133,3 +155,71 @@ def build_presenter_panel(
     strip = build_disclosure_strip(disclosure_label, panel_size, lang)
     panel.alpha_composite(strip, dest=(0, panel_size[1] - DISCLOSURE_HEIGHT - 12))
     return panel
+
+
+class PresenterSource:
+    """A pre-baked presenter loop, decoded once and ready for O(1) lookup.
+
+    Decoding a video frame inside the per-frame render path would undo the
+    compositing work: seeking backwards at every loop boundary is expensive,
+    and the whole point of pre-baking is that no inference or decode happens
+    during rendering. So the loop is decoded once at panel size, the
+    disclosure strip is burnt in, and each output frame is an index lookup.
+
+    Frames are held as RGB and pasted through one shared rounded mask rather
+    than each carrying its own alpha, which is a third less memory.
+    """
+
+    def __init__(self, frames: List[Image.Image], panel_size: Tuple[int, int], sample_fps: float):
+        if not frames:
+            raise ValueError("presenter source has no frames")
+        self.frames = frames
+        self.panel_size = panel_size
+        self.sample_fps = sample_fps
+        self.mask = panel_mask(panel_size)
+
+    @classmethod
+    def load(
+        cls,
+        video_path: str,
+        layout: PresenterLayout,
+        disclosure_label: str,
+        lang: str = "en",
+        sample_fps: float = PRESENTER_SAMPLE_FPS,
+    ) -> "PresenterSource":
+        if not disclosure_label or not disclosure_label.strip():
+            raise ValueError(
+                "a presenter source requires a non-empty disclosure_label; "
+                "an unlabelled synthetic presenter is not permitted"
+            )
+
+        from moviepy import VideoFileClip
+
+        panel_size = layout.panel_size
+        strip = build_disclosure_strip(disclosure_label, panel_size, lang)
+        strip_y = panel_size[1] - DISCLOSURE_HEIGHT - 12
+
+        frames: List[Image.Image] = []
+        clip = VideoFileClip(video_path)
+        try:
+            for arr in clip.iter_frames(fps=sample_fps, dtype="uint8"):
+                fitted = fit_presenter_frame(Image.fromarray(arr), panel_size, rounded=False)
+                fitted = fitted.convert("RGBA")
+                fitted.alpha_composite(strip, dest=(0, strip_y))
+                frames.append(fitted.convert("RGB"))
+        finally:
+            clip.close()
+
+        logger.info(
+            "presenter loop %s: %d frames at %.0f fps, panel %dx%d",
+            video_path, len(frames), sample_fps, *panel_size,
+        )
+        return cls(frames, panel_size, sample_fps)
+
+    def frame_at(self, t: float) -> Image.Image:
+        """Frame for time `t`, wrapping so the loop covers any scene length."""
+        idx = int(t * self.sample_fps) % len(self.frames)
+        return self.frames[idx]
+
+    def paste_onto(self, frame: Image.Image, box: Tuple[int, int], t: float) -> None:
+        frame.paste(self.frame_at(t), box, self.mask)
