@@ -56,7 +56,10 @@ requests.post(
 print("[OK] Approved.")
 
 print(f"[INFO] 6. Rendering Final MP4 Videos...")
-r6 = requests.post(f"{BASE_URL}/api/jobs/{job_id}/render", timeout=300)
+# CPU (libx264) rendering costs roughly 2-3 minutes per language at 1080p,
+# so four languages needs well over the 300s this used to allow. NVENC would
+# be far faster but is not available on every machine.
+r6 = requests.post(f"{BASE_URL}/api/jobs/{job_id}/render", timeout=1800)
 if r6.status_code != 200:
   print(f"[ERROR] Video render failed: {r6.text}")
   sys.exit(1)

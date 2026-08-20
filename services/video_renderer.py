@@ -15,10 +15,31 @@ machine that has it, and silently produces tofu everywhere else.
 
 from pathlib import Path
 
+import numpy as np
+
 from compositor import layers
-from models.schemas import NoticeVideoJob
+from models.schemas import NoticeVideoJob, SceneDefinition
 
 OUTPUT_DIR = Path("static/videos")
+
+
+def render_scene_card_image(scene: SceneDefinition, lang: str = "en") -> np.ndarray:
+  """A single still frame of `scene`, as an RGB array.
+
+  Used by the /api/test/preview-card endpoint. Built from the same layer
+  stack as the video (minus motion and captions, which need a time), so a
+  preview shows the real typography rather than an approximation of it.
+  """
+  canvas = (layers.VIDEO_WIDTH, layers.VIDEO_HEIGHT)
+  frame = layers.build_background_source(scene.asset, *canvas)
+  frame = frame.crop((0, 0, *canvas)).convert("RGBA")
+
+  static_layers = layers.build_static_layers(scene, lang, canvas)
+  for key in ("metric_card", "headline_subtext", "alert_pill"):
+    if key in static_layers:
+      frame.alpha_composite(static_layers[key])
+
+  return np.asarray(frame.convert("RGB"))
 
 
 def render_notice_video(job: NoticeVideoJob, lang: str = "en") -> str:
