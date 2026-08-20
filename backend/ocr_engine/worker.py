@@ -25,13 +25,22 @@ def parse_args():
     return parser.parse_args()
 
 def extract_pdf(pdf_path: str, lang: str, dpi: int, use_gpu: bool, min_conf: float):
-    # Initialize PaddleOCR (Stable v2.8.1 API)
-    ocr = PaddleOCR(
-        use_angle_cls=True,
-        lang=lang,
-        use_gpu=use_gpu,
-        show_log=False
-    )
+    # Initialize PaddleOCR with graceful fallback
+    try:
+        ocr = PaddleOCR(
+            use_angle_cls=False,
+            lang=lang,
+            use_gpu=use_gpu,
+            show_log=False,
+        )
+    except Exception:
+        ocr = PaddleOCR(
+            use_angle_cls=False,
+            lang=lang,
+            use_gpu=False,
+            show_log=False,
+        )
+        use_gpu = False
 
     doc = fitz.open(pdf_path)
     zoom = dpi / 72.0
@@ -46,8 +55,21 @@ def extract_pdf(pdf_path: str, lang: str, dpi: int, use_gpu: bool, min_conf: flo
         # Fast zero-copy / buffer conversion to NumPy array
         img_np = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
 
-        # Run inference
-        result = ocr.ocr(img_np, cls=True)
+        # Run inference with dynamic fallback
+        try:
+            result = ocr.ocr(img_np, cls=False)
+        except Exception as ocr_err:
+            if use_gpu:
+                ocr = PaddleOCR(
+                    use_angle_cls=False,
+                    lang=lang,
+                    use_gpu=False,
+                    show_log=False,
+                )
+                use_gpu = False
+                result = ocr.ocr(img_np, cls=False)
+            else:
+                raise ocr_err
 
         page_blocks = []
         if result and result[0] is not None:

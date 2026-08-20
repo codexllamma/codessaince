@@ -55,6 +55,15 @@ def run_ephemeral_ocr(
         text=True
     )
 
+    # If GPU failed, gracefully retry on CPU
+    if process.returncode != 0 and target_gpu:
+        cmd_cpu = [arg for arg in cmd if arg != "--use_gpu"]
+        process = subprocess.run(
+            cmd_cpu,
+            capture_output=True,
+            text=True
+        )
+
     if process.returncode != 0:
         raise OCRExecutionError(
             f"Worker failed with exit code {process.returncode}.\nStderr: {process.stderr.strip()}"
