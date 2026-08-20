@@ -22,6 +22,11 @@ from models.schemas import (
 from services.audio_synthesizer import process_job_audio
 from services.scene_generator import build_scenes_from_facts
 from services.video_renderer import render_notice_video
+from services.translator import localize_scenes
+
+from fastapi.responses import FileResponse
+from PIL import Image
+from services.video_renderer import render_scene_card_image
 
 JOBS_DIR = Path("jobs")
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -196,6 +201,109 @@ def extract_facts(job_id: str):
   save_job(job)
   return job
 
+
+
+# 1. Quick Image Preview Endpoint for Font Verification
+@app.get("/api/test/preview-card/{lang}")
+def preview_language_card(lang: str):
+  valid_langs = ["en", "hi", "ta", "te"]
+  if lang not in valid_langs:
+    raise HTTPException(
+        status_code=400,
+        detail=f"Language must be one of {valid_langs}",
+    )
+
+  sample_hierarchies = {
+      "en": VisualTextHierarchy(
+          badge_tag="OFFICIAL NOTICE",
+          headline="PM-KISAN 17th Installment",
+          subtext="Ministry of Agriculture & Farmers Welfare",
+          highlight_metric="₹2,000",
+          highlight_sublabel="Direct Benefit Transfer",
+      ),
+      "hi": VisualTextHierarchy(
+          badge_tag="आधिकारिक सूचना",
+          headline="पीएम-किसान 17वीं किस्त जारी",
+          subtext="कृषि एवं किसान कल्याण मंत्रालय",
+          highlight_metric="₹2,000",
+          highlight_sublabel="प्रत्यक्ष लाभ अंतरण",
+      ),
+      "ta": VisualTextHierarchy(
+          badge_tag="அதிகாரப்பூர்வ அறிவிப்பு",
+          headline="பிஎம்-கிசான் 17வது தவணை வெளியீடு",
+          subtext="வேளாண்மை மற்றும் விவசாயிகள் நல அமைச்சகம்",
+          highlight_metric="₹2,000",
+          highlight_sublabel="நேரடி பலன் பரிமாற்றம்",
+      ),
+      "te": VisualTextHierarchy(
+          badge_tag="అధికారిక ప్రకటన",
+          headline="పీఎం-కిసాన్ 17వ విడత విడుదల",
+          subtext="వ్యవసాయ మరియు రైతు సంక్షేమ మంత్రిత్వ శాఖ",
+          highlight_metric="₹2,000",
+          highlight_sublabel="ప్రత్యక్ష ప్రయోజన బదిలీ",
+      ),
+  }
+
+  sample_spoken = {
+      "en": (
+          "Official notice: PM-KISAN 17th installment has been transferred"
+          " directly to beneficiary accounts."
+      ),
+      "hi": (
+          "आधिकारिक सूचना: पीएम-किसान की 17वीं किस्त सीधे लाभार्थियों के खातों"
+          " में स्थानांतरित कर दी गई है।"
+      ),
+      "ta": (
+          "அதிகாரப்பூர்வ அறிவிப்பு: பிஎம்-கிசான் 17வது தவணை பயனாளிகளின்"
+          " கணக்குகளுக்கு நேரடியாக மாற்றப்பட்டுள்ளது."
+      ),
+      "te": (
+          "అధికారిక ప్రకటన: పీఎం-కిసాన్ 17వ విడత నేరుగా లబ్ధిదారుల ఖాతాలకు బదిలీ"
+          " చేయబడింది."
+      ),
+  }
+
+  dummy_scene = SceneDefinition(
+      scene_id=1,
+      template_type=TemplateType.METRIC_FOCUS,
+      script_segments=[
+          ScriptSegment(type="filler", text=sample_spoken[lang])
+      ],
+      full_spoken_text=sample_spoken[lang],
+      visual_hierarchy=sample_hierarchies[lang],
+      asset=VisualAssetSelection(
+          asset_id="default",
+          asset_type="static_graphic",
+          file_path="",
+      ),
+  )
+
+  img_array = render_scene_card_image(dummy_scene, lang=lang)
+  output_preview_path = Path(f"static/preview_{lang}.png")
+  Image.fromarray(img_array).save(output_preview_path)
+
+  return FileResponse(output_preview_path, media_type="image/png")
+
+
+@app.post("/api/jobs/{job_id}/generate-scenes", response_model=NoticeVideoJob)
+def generate_scenes(job_id: str):
+  job = load_job(job_id)
+
+  if not job.extracted_facts:
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Cannot generate scenes without extracted facts.",
+    )
+
+  # 1. Build Master English Scenes
+  master_en = build_scenes_from_facts(job.extracted_facts)
+  job.master_scenes_en = master_en
+
+  # 2. Localize for requested target languages (hi, ta, te)
+  job.localized_scenes = localize_scenes(master_en, job.target_languages)
+
+  save_job(job)
+  return job
 
 @app.put("/api/jobs/{job_id}/facts", response_model=NoticeVideoJob)
 def update_facts(job_id: str, payload: UpdateFactsRequest):

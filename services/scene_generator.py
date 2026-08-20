@@ -5,9 +5,9 @@ from models.schemas import (
     SceneDefinition,
     ScriptSegment,
     TemplateType,
-    VisualAssetSelection,
     VisualTextHierarchy,
 )
+from services.asset_matcher import match_visual_asset
 
 
 def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]:
@@ -23,17 +23,15 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
   scene_idx = 1
 
   # Scene 1: Hero Announcement
-  scheme_name = (
-      scheme.effective_value if scheme else "New Government Initiative"
-  )
+  scheme_name = scheme.effective_value if scheme else "Government Notice"
   auth_name = (
-      authority.effective_value if authority else "Government of India"
+      authority.effective_value if authority else "Ministry of Agriculture"
   )
 
   s1_segments = [
       ScriptSegment(
           type="filler",
-          text=f"Official announcement issued by the {auth_name}.",
+          text=f"Official announcement from the {auth_name}.",
           emphasis_level="none",
           pause_after_ms=100,
       ),
@@ -44,38 +42,26 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
           pause_after_ms=350,
           linked_fact_id=scheme.fact_id if scheme else None,
       ),
-      ScriptSegment(
-          type="filler",
-          text="has been officially notified.",
-          emphasis_level="none",
-          pause_after_ms=200,
-      ),
   ]
+  s1_spoken = " ".join(seg.text for seg in s1_segments)
 
   scenes.append(
       SceneDefinition(
           scene_id=scene_idx,
           template_type=TemplateType.HERO_ANNOUNCEMENT,
           script_segments=s1_segments,
-          full_spoken_text=" ".join(seg.text for seg in s1_segments),
+          full_spoken_text=s1_spoken,
           visual_hierarchy=VisualTextHierarchy(
               badge_tag="OFFICIAL NOTICE",
               headline=scheme_name,
               subtext=auth_name,
-              highlight_metric=None,
-              highlight_sublabel=None,
           ),
-          asset=VisualAssetSelection(
-              asset_id="broll_agri_01",
-              asset_type="video_loop",
-              file_path="assets/broll/agriculture_wheat_01.mp4",
-              dim_overlay_opacity=0.65,
-          ),
+          asset=match_visual_asset(TemplateType.HERO_ANNOUNCEMENT, s1_spoken),
       )
   )
   scene_idx += 1
 
-  # Scene 2: Core Benefit / Metric Focus
+  # Scene 2: Metric Focus
   if amount:
     amt_val = amount.effective_value
     s2_segments = [
@@ -94,41 +80,37 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
         ),
         ScriptSegment(
             type="filler",
-            text="transferred directly via Direct Benefit Transfer.",
+            text="directly transferred to bank accounts.",
             emphasis_level="none",
             pause_after_ms=200,
         ),
     ]
+    s2_spoken = " ".join(seg.text for seg in s2_segments)
 
     scenes.append(
         SceneDefinition(
             scene_id=scene_idx,
             template_type=TemplateType.METRIC_FOCUS,
             script_segments=s2_segments,
-            full_spoken_text=" ".join(seg.text for seg in s2_segments),
+            full_spoken_text=s2_spoken,
             visual_hierarchy=VisualTextHierarchy(
-                badge_tag="FINANCIAL BENEFIT",
+                badge_tag="DISBURSEMENT",
                 headline="Direct Benefit Transfer",
                 subtext="Direct bank transfer to eligible accounts",
                 highlight_metric=amt_val,
                 highlight_sublabel="Per Beneficiary",
             ),
-            asset=VisualAssetSelection(
-                asset_id="broll_bank_01",
-                asset_type="video_loop",
-                file_path="assets/broll/banking_digital_rupee.mp4",
-                dim_overlay_opacity=0.70,
-            ),
+            asset=match_visual_asset(TemplateType.METRIC_FOCUS, s2_spoken),
         )
     )
     scene_idx += 1
 
-  # Scene 3: Deadline & Action Alert
+  # Scene 3: Deadline Alert
   if deadline or action:
     dl_val = (
         deadline.effective_value
         if deadline
-        else "the prescribed cutoff date"
+        else "the specified cutoff date"
     )
     act_val = (
         action.effective_value
@@ -139,7 +121,7 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
     s3_segments = [
         ScriptSegment(
             type="filler",
-            text="Please ensure you",
+            text="Beneficiaries must complete",
             emphasis_level="none",
             pause_after_ms=50,
         ),
@@ -152,7 +134,7 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
         ),
         ScriptSegment(
             type="filler",
-            text="on or before the mandatory deadline of",
+            text="on or before",
             emphasis_level="none",
             pause_after_ms=100,
         ),
@@ -164,13 +146,14 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
             linked_fact_id=deadline.fact_id if deadline else None,
         ),
     ]
+    s3_spoken = " ".join(seg.text for seg in s3_segments)
 
     scenes.append(
         SceneDefinition(
             scene_id=scene_idx,
             template_type=TemplateType.DEADLINE_ALERT,
             script_segments=s3_segments,
-            full_spoken_text=" ".join(seg.text for seg in s3_segments),
+            full_spoken_text=s3_spoken,
             visual_hierarchy=VisualTextHierarchy(
                 badge_tag="DEADLINE ALERT",
                 headline=act_val,
@@ -178,45 +161,35 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
                 highlight_metric=dl_val,
                 highlight_sublabel="Cutoff Date",
             ),
-            asset=VisualAssetSelection(
-                asset_id="broll_alert_01",
-                asset_type="video_loop",
-                file_path="assets/broll/abstract_alert_loop.mp4",
-                dim_overlay_opacity=0.75,
-            ),
+            asset=match_visual_asset(TemplateType.DEADLINE_ALERT, s3_spoken),
         )
     )
     scene_idx += 1
 
-  # Scene 4: Outro / Official Source
+  # Scene 4: Outro CTA
   s4_segments = [
       ScriptSegment(
           type="filler",
-          text="For official status tracking and grievances, visit the national portal or contact your local administrative office.",
+          text="For official status and updates, visit pmkisan.gov.in.",
           emphasis_level="none",
           pause_after_ms=300,
       )
   ]
+  s4_spoken = " ".join(seg.text for seg in s4_segments)
 
   scenes.append(
       SceneDefinition(
           scene_id=scene_idx,
           template_type=TemplateType.OUTRO_CALL_TO_ACTION,
           script_segments=s4_segments,
-          full_spoken_text=" ".join(seg.text for seg in s4_segments),
+          full_spoken_text=s4_spoken,
           visual_hierarchy=VisualTextHierarchy(
               badge_tag="OFFICIAL PORTAL",
               headline="Verify Online",
               subtext="pmkisan.gov.in",
-              highlight_metric=None,
               highlight_sublabel="National Helpdesk: 155261",
           ),
-          asset=VisualAssetSelection(
-              asset_id="broll_agri_01",
-              asset_type="video_loop",
-              file_path="assets/broll/agriculture_wheat_01.mp4",
-              dim_overlay_opacity=0.65,
-          ),
+          asset=match_visual_asset(TemplateType.OUTRO_CALL_TO_ACTION, s4_spoken),
       )
   )
 

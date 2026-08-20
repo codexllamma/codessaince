@@ -12,40 +12,46 @@ from PIL import Image, ImageDraw, ImageFont
 from models.schemas import (
     NoticeVideoJob,
     SceneDefinition,
-    WordTimestamp,
 )
 
 WIDTH = 1920
 HEIGHT = 1080
 FPS = 24
 
+LOCAL_FONTS_DIR = Path("assets/fonts")
 
-def get_system_font(
-    size: int, is_bold: bool = False
-) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-  font_candidates = [
-      "C:\\Windows\\Fonts\\arialbd.ttf" if is_bold else "C:\\Windows\\Fonts\\arial.ttf",
-      "C:\\Windows\\Fonts\\NirmalaB.ttf"
-      if is_bold
-      else "C:\\Windows\\Fonts\\Nirmala.ttf",
-      "C:\\Windows\\Fonts\\segoeui.ttf",
-  ]
-  for path in font_candidates:
-    if Path(path).exists():
-      try:
-        return ImageFont.truetype(path, size)
-      except Exception:
-        continue
+FONT_MAPPING = {
+    "hi": LOCAL_FONTS_DIR / "NotoSansDevanagari-Bold.ttf",
+    "ta": LOCAL_FONTS_DIR / "NotoSansTamil-Bold.ttf",
+    "te": LOCAL_FONTS_DIR / "NotoSansTelugu-Bold.ttf",
+    "en": LOCAL_FONTS_DIR / "NotoSans-Bold.ttf",
+}
+
+
+def get_font_for_lang(lang: str, size: int) -> ImageFont.FreeTypeFont:
+  font_file = FONT_MAPPING.get(lang, FONT_MAPPING["en"])
+
+  if font_file.exists():
+    return ImageFont.truetype(str(font_file), size)
+
+  # Fallback to standard Windows Nirmala if assets folder missing
+  win_nirmala = Path("C:/Windows/Fonts/NirmalaB.ttf")
+  if win_nirmala.exists():
+    return ImageFont.truetype(str(win_nirmala), size)
+
   return ImageFont.load_default()
 
 
-def render_scene_card_image(scene: SceneDefinition) -> np.ndarray:
+def render_scene_card_image(
+    scene: SceneDefinition, lang: str = "en"
+) -> np.ndarray:
   img = Image.new("RGB", (WIDTH, HEIGHT), (15, 23, 42))
   draw = ImageDraw.Draw(img)
 
   card_x0, card_y0 = 120, 100
   card_x1, card_y1 = WIDTH - 120, HEIGHT - 220
 
+  # Background Container Box
   draw.rounded_rectangle(
       [card_x0, card_y0, card_x1, card_y1],
       radius=24,
@@ -54,68 +60,92 @@ def render_scene_card_image(scene: SceneDefinition) -> np.ndarray:
       width=2,
   )
 
-  # Badge Tag
+  # 1. Badge Tag
   vh = scene.visual_hierarchy
-  badge_text = f"  {vh.badge_tag.upper()}  "
+  font_badge = get_font_for_lang(lang, 24)
+  badge_text = f"  {vh.badge_tag}  "
   draw.rounded_rectangle(
-      [card_x0 + 60, card_y0 + 50, card_x0 + 60 + 340, card_y0 + 105],
+      [card_x0 + 60, card_y0 + 50, card_x0 + 60 + 460, card_y0 + 105],
       radius=8,
       fill=(37, 99, 235),
   )
-  draw.text((card_x0 + 75, card_y0 + 62), badge_text, fill=(255, 255, 255))
+  draw.text(
+      (card_x0 + 75, card_y0 + 60),
+      badge_text,
+      font=font_badge,
+      fill=(255, 255, 255),
+  )
 
-  # Headline & Subtext
-  draw.text((card_x0 + 60, card_y0 + 140), vh.headline, fill=(255, 255, 255))
-  draw.text((card_x0 + 60, card_y0 + 220), vh.subtext, fill=(148, 163, 184))
+  # 2. Headline & Subtext
+  font_head = get_font_for_lang(lang, 44)
+  font_sub = get_font_for_lang(lang, 26)
+  draw.text(
+      (card_x0 + 60, card_y0 + 135),
+      vh.headline,
+      font=font_head,
+      fill=(255, 255, 255),
+  )
+  draw.text(
+      (card_x0 + 60, card_y0 + 215),
+      vh.subtext,
+      font=font_sub,
+      fill=(148, 163, 184),
+  )
 
-  # Metric Highlight Box
+  # 3. Metric Highlight Box
   if vh.highlight_metric:
-    metric_y = card_y0 + 320
+    metric_y = card_y0 + 310
     draw.rounded_rectangle(
-        [card_x0 + 60, metric_y, card_x1 - 60, metric_y + 180],
+        [card_x0 + 60, metric_y, card_x1 - 60, metric_y + 190],
         radius=16,
         fill=(15, 23, 42),
         outline=(245, 158, 11),
         width=3,
     )
+    font_metric = get_font_for_lang(lang, 52)
     draw.text(
-        (card_x0 + 100, metric_y + 40),
+        (card_x0 + 100, metric_y + 35),
         vh.highlight_metric,
+        font=font_metric,
         fill=(251, 191, 36),
     )
     if vh.highlight_sublabel:
+      font_metric_sub = get_font_for_lang(lang, 26)
       draw.text(
           (card_x0 + 100, metric_y + 120),
           vh.highlight_sublabel,
+          font=font_metric_sub,
           fill=(203, 213, 225),
       )
 
-  # Static Subtitle Preview Bar
+  # 4. Spoken Subtitle Bar
   sub_y = HEIGHT - 180
   draw.rounded_rectangle(
       [140, sub_y, WIDTH - 140, sub_y + 80],
       radius=12,
       fill=(10, 15, 30),
   )
+  font_sub_preview = get_font_for_lang(lang, 24)
   display_text = (
       scene.full_spoken_text[:90] + "..."
       if len(scene.full_spoken_text) > 90
       else scene.full_spoken_text
   )
-  draw.text((170, sub_y + 25), display_text, fill=(226, 232, 240))
+  draw.text(
+      (170, sub_y + 24),
+      display_text,
+      font=font_sub_preview,
+      fill=(226, 232, 240),
+  )
 
   return np.array(img)
 
 
-def build_scene_clip(scene: SceneDefinition) -> ImageClip:
+def build_scene_clip(scene: SceneDefinition, lang: str = "en") -> ImageClip:
   duration = scene.scene_duration_sec or 5.0
-  card_array = render_scene_card_image(scene)
+  card_array = render_scene_card_image(scene, lang=lang)
 
-  clip = (
-      ImageClip(card_array)
-      .with_duration(duration)
-      .with_fps(FPS)
-  )
+  clip = ImageClip(card_array).with_duration(duration).with_fps(FPS)
 
   if scene.audio_path:
     audio_full_path = Path(scene.audio_path.lstrip("/"))
@@ -138,7 +168,7 @@ def render_notice_video(job: NoticeVideoJob, lang: str = "en") -> str:
   output_filename = f"{job.job_id}_final_{lang}.mp4"
   output_path = out_dir / output_filename
 
-  scene_clips = [build_scene_clip(scene) for scene in scenes]
+  scene_clips = [build_scene_clip(scene, lang=lang) for scene in scenes]
   final_video = concatenate_videoclips(scene_clips, method="compose")
 
   final_video.write_videofile(

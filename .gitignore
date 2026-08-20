@@ -33,6 +33,7 @@ tmp/
 *.vtt
 static/videos/*
 static/audio/*
+static/font_tests/*
 !static/videos/.gitkeep
 !static/audio/.gitkeep
 
