@@ -10,6 +10,20 @@ __pycache__/
 dist/
 build/
 
+# Binary Executables & Large Model Weights (>50MB / >100MB)
+*.exe
+ffmpeg.exe
+*.pth
+*.pt
+*.onnx
+*.bin
+*.tar
+*.zip
+gfpgan/weights/
+services/wav2lip/checkpoints/
+services/wav2lip/face_detection/detection/sfd/*.pth
+services/wav2lip/gfpgan/weights/
+
 # Environment Variables & API Secrets
 .env
 .env.local
@@ -37,11 +51,16 @@ tests/fixtures/audio/
 *.aac
 *.srt
 *.vtt
+static/*.png
+static/*.avi
+static/*.mp4
 static/videos/*
 static/audio/*
 static/font_tests/*
 !static/videos/.gitkeep
 !static/audio/.gitkeep
+ocr_engine/dll_x64/
+ocr_engine/*.zip
 
 # Presenter avatar loops are inputs, not generated deliverables: the tests and
 # the documented try-it path both need placeholder_m01.mp4 present.

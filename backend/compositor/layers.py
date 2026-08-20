@@ -749,23 +749,65 @@ def resolve_audio_path(audio_path: Optional[str]) -> Optional[Path]:
     return None
 
 
-def resolve_presenter(lang: str, canvas_size: Tuple[int, int]):
-    """(PresenterSource, PresenterLayout) for `lang`, or (None, None)."""
+def resolve_presenter(
+    lang: str,
+    canvas_size: Tuple[int, int],
+    scene: Optional[SceneDefinition] = None,
+    use_wav2lip: bool = True,
+):
+    """(PresenterSource, PresenterLayout) for `lang`, with dynamic Wav2Lip-HD lip-sync and fallback."""
     from services import avatar_registry
-
-    avatar = avatar_registry.resolve(lang)
-    if avatar is None:
-        return None, None
 
     H = canvas_size[1]
     caption_reserve = int(H * karaoke.BOTTOM_SAFE_PCT)
     layout = presenter.compute_layout(canvas_size, caption_reserve)
+
+    # 1. Dynamic Wav2Lip-HD Lip-Sync Synthesis
+    if use_wav2lip and scene is not None and scene.audio_path:
+        audio_file = resolve_audio_path(scene.audio_path)
+        anchor_img = Path("assets/avatars/anchor_source.png")
+        if audio_file is not None and anchor_img.is_file():
+            try:
+                from services.wav2lip_service import generate_lip_sync
+
+                cache_dir = Path("static/avatars")
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                lip_sync_mp4 = cache_dir / f"{audio_file.stem}_wav2lip.mp4"
+
+                if not lip_sync_mp4.exists() or lip_sync_mp4.stat().st_size < 1000:
+                    generate_lip_sync(
+                        face_image_path=anchor_img,
+                        audio_path=audio_file,
+                        output_path=lip_sync_mp4,
+                        batch_size=32,
+                        enhance_face=True,
+                    )
+
+                source = presenter.PresenterSource.load(
+                    str(lip_sync_mp4), layout, "AI-GENERATED PRESENTER", lang
+                )
+                logger.info("Wav2Lip-HD presenter active for scene %s lang=%s", scene.scene_id, lang)
+                return source, layout
+            except Exception as e:
+                logger.warning(
+                    "Wav2Lip-HD synthesis failed (%s); falling back to static/registered avatar loop",
+                    e,
+                    exc_info=True,
+                )
+
+    # 2. Pre-baked / Registered Avatar Loop Fallback
+    avatar = avatar_registry.resolve(lang)
+    if avatar is None:
+        return None, None
+
     try:
         source = presenter.PresenterSource.load(
             str(avatar.file_path), layout, avatar.disclosure_label, lang
         )
     except Exception:
-        logger.warning("failed to load avatar %r; rendering without a presenter", avatar.avatar_id, exc_info=True)
+        logger.warning(
+            "failed to load avatar %r; rendering without a presenter", avatar.avatar_id, exc_info=True
+        )
         return None, None
 
     logger.info("presenter %r active for lang=%s", avatar.avatar_id, lang)
@@ -777,6 +819,11 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
 
     if scene.scene_duration_sec is None or scene.subtitles is None:
         raise ValueError(f"scene {scene.scene_id} is missing synthesized duration/subtitles (mixed state, see README §7.4 invariant 1)")
+
+    if presenter_source is None and presenter_layout is not None:
+        p_source, _ = resolve_presenter(lang, canvas_size, scene=scene)
+    else:
+        p_source = presenter_source
 
     content_box = presenter_layout.content_box if presenter_layout is not None else None
 
@@ -861,10 +908,10 @@ def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc",
     print(f"[RENDER JOB TARGET] Output Path: {out_path}", flush=True)
     print(f"=======================================================", flush=True)
 
-    presenter_source, presenter_layout = resolve_presenter(lang, canvas_size)
+    _, presenter_layout = resolve_presenter(lang, canvas_size)
 
     clips = [
-        render_scene_clip(s, lang, i, canvas_size, presenter_source, presenter_layout)
+        render_scene_clip(s, lang, i, canvas_size, presenter_source=None, presenter_layout=presenter_layout)
         for i, s in enumerate(scenes)
     ]
     final = concatenate_videoclips(clips, method="chain")

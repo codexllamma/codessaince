@@ -14,6 +14,20 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+# Binary Executables & Large Model Weights (>50MB / >100MB)
+*.exe
+*.pth
+*.pt
+*.onnx
+*.bin
+*.tar
+*.zip
+backend/ffmpeg.exe
+backend/gfpgan/weights/
+backend/services/wav2lip/checkpoints/
+backend/services/wav2lip/face_detection/detection/sfd/*.pth
+backend/services/wav2lip/gfpgan/weights/
+
 # Node
 node_modules/
 
