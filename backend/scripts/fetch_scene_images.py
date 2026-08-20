@@ -32,19 +32,72 @@ from services import image_fetcher
 CATEGORIES = ["SCHEME_NAME", "AMOUNT", "DEADLINE", "ACTION_REQUIRED"]
 
 
+ENABLE_URL = "https://console.cloud.google.com/apis/library/customsearch.googleapis.com"
+CX_URL = "https://programmablesearchengine.google.com/controlpanel/all"
+
+
 def check() -> int:
+  """Diagnose the setup. Costs one query only if both values are present."""
   key, cx = image_fetcher._credentials()
-  print(f"GOOGLE_API_KEY    : {'set (' + key[:6] + '…)' if key else 'NOT SET'}")
-  print(f"SEARCH_ENGINE_ID  : {'set (' + cx[:6] + '…)' if cx else 'NOT SET'}")
-  if not (key and cx):
-    print(f"\nCopy {BACKEND_ROOT / '.env.example'} to .env and fill both in.")
-    return 1
+  print(f"GOOGLE_API_KEY    : {'set (' + key[:10] + '…, ' + str(len(key)) + ' chars)' if key else 'NOT SET'}")
+  print(f"SEARCH_ENGINE_ID  : {'set (' + cx[:10] + '…)' if cx else 'NOT SET'}")
 
   cached = list(image_fetcher.CACHE_DIR.glob("*.json")) if image_fetcher.CACHE_DIR.is_dir() else []
   fetched = list(image_fetcher.FETCHED_DIR.glob("*.png")) if image_fetcher.FETCHED_DIR.is_dir() else []
-  print(f"\ncached searches   : {len(cached)} (each one is a query you do not pay for again)")
+  print(f"cached searches   : {len(cached)}")
   print(f"images on disk    : {len(fetched)}")
-  print("\nCredentials look present. This check spent no quota; run without --check to fetch.")
+
+  if not key:
+    print(f"\nSet GOOGLE_API_KEY in {BACKEND_ROOT / '.env'} (see .env.example).")
+    return 1
+
+  import requests
+
+  # A deliberately invalid cx still tells us whether the key works and the API
+  # is switched on, so this is worth running before the cx exists.
+  probe_cx = cx or "000000000000000000000:aaaaaaaaaaa"
+  try:
+    response = requests.get(
+        image_fetcher.ENDPOINT,
+        params={"key": key, "cx": probe_cx, "q": "test", "searchType": "image", "num": 1},
+        timeout=15,
+    )
+  except Exception as exc:
+    print(f"\nCould not reach the API: {exc}")
+    return 1
+
+  message = ""
+  try:
+    message = response.json().get("error", {}).get("message", "")
+  except ValueError:
+    pass
+
+  if response.status_code == 403 and "does not have the access" in message:
+    print("\n[FAIL] The Custom Search JSON API is not enabled on this key's project.")
+    print(f"       Enable it here, on the SAME project the key belongs to:\n       {ENABLE_URL}")
+    print("       It can take a minute or two to take effect after enabling.")
+    return 1
+
+  if response.status_code == 400 and "API key not valid" in message:
+    print("\n[FAIL] The API key itself was rejected. Re-copy it from the Credentials page.")
+    return 1
+
+  if not cx:
+    print("\n[OK]   Key accepted and the API is enabled.")
+    print(f"[NEXT] Set SEARCH_ENGINE_ID in .env. Get it from:\n       {CX_URL}")
+    print("       Create one with 'Search the entire web', then turn Image search ON.")
+    return 1
+
+  if response.status_code == 400:
+    print(f"\n[FAIL] The search engine ID was rejected: {message[:120]}")
+    print(f"       Check it against {CX_URL}")
+    return 1
+
+  if not response.ok:
+    print(f"\n[FAIL] HTTP {response.status_code}: {message[:160]}")
+    return 1
+
+  print("\n[OK]   Key and search engine ID both work. Run without --check to fetch.")
   return 0
 
 
