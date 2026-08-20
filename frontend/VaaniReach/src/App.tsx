@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Navbar } from './components/Navbar';
-import { Stepper } from './components/Stepper';
+import { Navbar } from './Components/Navbar';
+import { Stepper } from './Components/Stepper';
 import { NoticeIngestion } from './Features/NoticeIngestion';
 import type { IngestConfig } from './Features/NoticeIngestion';
 import { Factverify } from './Features/Factverify';

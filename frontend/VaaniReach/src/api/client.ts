@@ -46,6 +46,26 @@ export interface VisualAssetSelection {
   dim_overlay_opacity?: number;
 }
 
+export interface GestureInfo {
+  name: string;
+  /** neutral = resting, present = used on core facts, stress = deadline scenes */
+  role: string;
+  duration_sec: number;
+}
+
+export interface AvatarInfo {
+  avatar_id: string;
+  display_name: string;
+  /** language codes, or '*' as a catch-all */
+  languages: string[];
+  source: 'synthetic' | 'licensed_stock' | 'consented_performer';
+  licence: string;
+  /** rendered on screen the whole time the presenter is visible */
+  disclosure_label: string;
+  /** empty when the avatar has no gesture sidecar — it loops instead */
+  gestures: GestureInfo[];
+}
+
 export interface WordTimestamp {
   word: string;
   start_sec: number;
@@ -186,6 +206,15 @@ export const api = {
   // 6. Render Video Broadcast
   renderVideo: async (jobId: string): Promise<NoticeVideoJob> => {
     const res = await fetch(`${BASE_URL}/api/jobs/${jobId}/render`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  // 7. Registered presenters and the gestures each can perform.
+  // An empty array is normal — it means no presenter is installed and the
+  // compositor renders its full-width layout instead.
+  listAvatars: async (): Promise<AvatarInfo[]> => {
+    const res = await fetch(`${BASE_URL}/api/avatars`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },

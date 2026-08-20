@@ -1,13 +1,27 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ShieldCheck,
   ShieldAlert,
   Video,
   Download,
   Loader2,
+  UserSquare2,
+  Hand,
 } from 'lucide-react';
-import type { NoticeVideoJob } from '../api/client';
+import type { AvatarInfo, NoticeVideoJob } from '../api/client';
 import { api } from '../api/client';
+
+const GESTURE_ROLE_HINT: Record<string, string> = {
+  neutral: 'resting pose',
+  present: 'on core facts',
+  stress: 'on deadline scenes',
+};
+
+const SOURCE_HINT: Record<string, string> = {
+  synthetic: 'Synthetic — no real person depicted',
+  licensed_stock: 'Licensed stock footage of a real person',
+  consented_performer: 'Filmed with the performer’s consent',
+};
 
 interface Props {
   job: NoticeVideoJob;
@@ -59,6 +73,33 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
     await onApproveJob(officerNotes);
   };
 
+  // Which presenters will front this broadcast. Loaded here rather than at
+  // render time because the officer needs it *before* signing off: approving
+  // a video with a photoreal presenter without being told it is one is
+  // exactly what the mandatory disclosure label exists to prevent.
+  const [avatars, setAvatars] = useState<AvatarInfo[] | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listAvatars()
+      .then((list) => {
+        if (!cancelled) setAvatars(list);
+      })
+      .catch((err) => {
+        if (!cancelled) setAvatarError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // An avatar fronts a language if it lists the code, or claims the catch-all.
+  const presentersForJob = (avatars || []).filter((a) =>
+    job.target_languages.some((l) => a.languages.includes(l) || a.languages.includes('*'))
+  );
+
   return (
     <div className="glass-panel p-8 max-w-6xl mx-auto space-y-8">
       {/* Header */}
@@ -81,6 +122,77 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
           </p>
         </div>
       </div>
+
+      {/* Synthetic presenter disclosure — shown before sign-off, not after */}
+      {avatarError ? (
+        <div className="bg-[#090E1A]/90 border border-rose-500/30 rounded-2xl p-4 text-sm text-rose-300">
+          Could not load presenter details: {avatarError}
+        </div>
+      ) : avatars === null ? (
+        <div className="bg-[#090E1A]/90 border border-white/10 rounded-2xl p-4 flex items-center gap-2 text-sm text-slate-400">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading presenter details…
+        </div>
+      ) : presentersForJob.length > 0 ? (
+        <div className="bg-[#090E1A]/90 border border-sky-500/30 rounded-2xl p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
+              <UserSquare2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">On-Screen Presenter Disclosure</h3>
+              <p className="text-xs text-slate-400">
+                These videos are fronted by a presenter who is not a government official. The
+                label below is burned into every frame the presenter appears in.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {presentersForJob.map((a) => (
+              <div key={a.avatar_id} className="border border-white/10 rounded-xl p-4 space-y-3 bg-black/30">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-white">{a.display_name}</span>
+                  <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30">
+                    {a.languages.join(', ')}
+                  </span>
+                </div>
+
+                <div className="text-xs text-amber-300 font-mono bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1.5">
+                  {a.disclosure_label}
+                </div>
+
+                <div className="text-xs text-slate-400">
+                  {SOURCE_HINT[a.source] || a.source}
+                </div>
+
+                {a.licence.startsWith('UNCONFIRMED') && (
+                  <div className="text-xs text-rose-300 border border-rose-500/30 bg-rose-500/10 rounded px-2 py-1.5">
+                    Licence unconfirmed — resolve before public dispatch.
+                  </div>
+                )}
+
+                <div className="flex items-start gap-2 text-xs text-slate-400">
+                  <Hand className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  {a.gestures.length > 0 ? (
+                    <span>
+                      {a.gestures.length} gestures, timed to the narration:{' '}
+                      {a.gestures
+                        .map((g) => `${g.name} (${GESTURE_ROLE_HINT[g.role] || g.role})`)
+                        .join(', ')}
+                    </span>
+                  ) : (
+                    <span>No gesture mapping — the clip loops unchanged.</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-[#090E1A]/90 border border-white/10 rounded-2xl p-4 text-sm text-slate-400">
+          No on-screen presenter installed — videos render in the full-width layout.
+        </div>
+      )}
 
       {/* Stage A: Verification Checklist & Digital Sign-off */}
       {!isApproved ? (

@@ -203,6 +203,58 @@ def extract_facts(job_id: str):
 
 
 
+class GestureInfo(BaseModel):
+  name: str
+  role: str
+  duration_sec: float
+
+
+class AvatarInfo(BaseModel):
+  avatar_id: str
+  display_name: str
+  languages: List[str]
+  source: str
+  licence: str
+  disclosure_label: str
+  gestures: List[GestureInfo]
+
+
+@app.get("/api/avatars", response_model=List[AvatarInfo])
+def list_avatars():
+  """Registered presenters and the gestures each can perform.
+
+  Surfaced so the approval step can tell an officer that a synthetic
+  presenter will front the broadcast, and under what label. That is a
+  disclosure question, not a cosmetic one — approving a video with a
+  photoreal presenter without being told is exactly what the mandatory
+  disclosure_label exists to prevent.
+
+  An empty list is a normal response: with no avatars installed the
+  compositor renders its full-width layout instead.
+  """
+  from compositor import gestures as gesture_mod
+  from services import avatar_registry
+
+  out: List[AvatarInfo] = []
+  for avatar in avatar_registry.load_registry():
+    vocab = gesture_mod.load_vocabulary(avatar.file_path)
+    out.append(
+        AvatarInfo(
+            avatar_id=avatar.avatar_id,
+            display_name=avatar.display_name,
+            languages=list(avatar.languages),
+            source=avatar.source,
+            licence=avatar.licence,
+            disclosure_label=avatar.disclosure_label,
+            gestures=[
+                GestureInfo(name=g.name, role=g.role, duration_sec=round(g.duration, 2))
+                for g in (vocab.gestures if vocab else ())
+            ],
+        )
+    )
+  return out
+
+
 # 1. Quick Image Preview Endpoint for Font Verification
 @app.get("/api/test/preview-card/{lang}")
 def preview_language_card(lang: str):
