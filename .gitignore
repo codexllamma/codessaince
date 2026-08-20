@@ -49,17 +49,13 @@ node_modules/
 /temp/
 /tmp/
 
-# Generated media
-*.mp4
-*.mp3
-*.wav
-*.aac
-*.srt
-*.vtt
-
-# Presenter avatar loops are inputs, not deliverables — the tests and the
-# documented try-it path both need placeholder_m01.mp4 present.
-!backend/assets/avatars/*.mp4
+# Generated media (un-ignore backend static assets and deliverables)
+!backend/static/videos/**
+!backend/static/audio/**
+!backend/static/avatars/**
+!backend/static/font_tests/**
+!backend/assets/fonts/**
+!backend/assets/avatars/**
 
 # IDE & OS
 .vscode/
