@@ -27,7 +27,9 @@
   "_example_entry": {
     "avatar_id": "placeholder_m01",
     "file": "placeholder_m01.mp4",
-    "languages": ["*"],
+    "languages": [
+      "*"
+    ],
     "display_name": "Placeholder Presenter",
     "source": "synthetic",
     "licence": "Procedurally generated placeholder, no real person depicted",
@@ -35,13 +37,31 @@
   },
   "avatars": [
     {
-      "avatar_id": "indic_official_m01",
-      "file": "placeholder_m01.mp4",
-      "languages": ["*"],
-      "display_name": "Indic Official Anchor",
+      "avatar_id": "anchor_m01",
+      "file": "anchor_m01.mp4",
+      "languages": [
+        "en",
+        "*"
+      ],
+      "display_name": "Anchor M01",
       "source": "synthetic",
-      "licence": "Procedurally generated placeholder, no real person depicted",
-      "disclosure_label": "AI-GENERATED PRESENTER"
+      "licence": "AI-generated news anchor (KingAI 3.0 watermark visible bottom-right); no real person depicted. Provenance supplied by teammate in commit 1770f99 - confirm generator terms before any non-demo use.",
+      "disclosure_label": "AI-GENERATED PRESENTER - NOT A GOVERNMENT OFFICIAL"
+    },
+    {
+      "avatar_id": "anchor_f01",
+      "file": "anchor_f01.mp4",
+      "languages": [
+        "hi",
+        "mr",
+        "ta",
+        "te",
+        "bn"
+      ],
+      "display_name": "Anchor F01",
+      "source": "synthetic",
+      "licence": "AI-generated news anchor (KingAI 3.0 watermark visible bottom-right); no real person depicted. Provenance supplied by teammate in commit 1770f99 - confirm generator terms before any non-demo use.",
+      "disclosure_label": "AI-GENERATED PRESENTER - NOT A GOVERNMENT OFFICIAL"
     }
   ]
 }
