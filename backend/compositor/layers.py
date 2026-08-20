@@ -13,7 +13,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 from PIL import Image, ImageDraw
 
-from compositor import _ffmpeg, karaoke, kenburns, presenter, typography
+from compositor import _ffmpeg, gestures, karaoke, kenburns, presenter, typography
 from models.schemas import SceneDefinition, VisualAssetSelection, WordTimestamp
 
 logger = logging.getLogger(__name__)
@@ -574,6 +574,7 @@ def make_frame_function(
     resample: int = KENBURNS_RESAMPLE,
     presenter_source=None,
     presenter_layout=None,
+    presenter_track=None,
     lang: str = "en",
 ) -> Callable[[float], np.ndarray]:
     """Kinetic, audio-synchronized frame compositor with animated entrances and progress bar."""
@@ -606,7 +607,7 @@ def make_frame_function(
 
         # 2. Split-screen Presenter if enabled
         if presenter_source is not None and presenter_box is not None:
-            presenter_source.paste_onto(frame, presenter_box, t)
+            presenter_source.paste_onto(frame, presenter_box, t, presenter_track)
 
         # 3. Top Scene Progress Bar (Animated timeline)
         draw = ImageDraw.Draw(frame)
@@ -728,6 +729,15 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
 
     content_box = presenter_layout.content_box if presenter_layout is not None else None
 
+    # Choreograph the presenter against this scene's word timings. Built per
+    # scene against the same decoded frames, so it costs no extra decoding.
+    presenter_track = None
+    if presenter_source is not None and getattr(presenter_source, "clip_path", None) is not None:
+        presenter_track = gestures.build_track(
+            scene.subtitles, scene.template_type,
+            scene.scene_duration_sec, presenter_source.clip_path,
+        )
+
     bg_source = build_background_source(scene.asset, *canvas_size)
     bg_video = build_background_video(scene.asset, *canvas_size)
     static_layers = build_static_layers(scene, lang, canvas_size, content_box)
@@ -740,7 +750,7 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
     frame_fn = make_frame_function(
         scene, static_layers, caption_cache, bg_source, pan_targets, canvas_size,
         presenter_source=presenter_source, presenter_layout=presenter_layout,
-        lang=lang,
+        presenter_track=presenter_track, lang=lang,
     )
     clip = VideoClip(frame_function=frame_fn, duration=scene.scene_duration_sec).with_fps(VIDEO_FPS)
     if bg_video is not None:

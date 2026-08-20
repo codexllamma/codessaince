@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "Gesture vocabulary for presenter_01.mp4. Each entry names a time window in",
+    "that clip which contains one recognisable gesture, so the compositor can pick",
+    "a gesture to match what is being said instead of looping the take blindly.",
+    "",
+    "Windows were located by hand-motion energy (scripts/segment_gestures.py) and",
+    "then named by eye - motion analysis can tell a still pose from a moving one,",
+    "but it cannot tell an open palm from a raised finger.",
+    "",
+    "'role' is what the scheduler matches on, not the key. Keep the three roles",
+    "below populated for any new avatar and no scheduling code has to change:",
+    "  neutral  - resting pose, used whenever nothing else applies",
+    "  present  - open, explanatory gesture, used on core facts",
+    "  stress   - tighter, more emphatic gesture, used on deadline scenes",
+    "",
+    "Windows are played ping-pong (forward then reversed) rather than looped, so",
+    "they always return to their opening pose and never jump. That also makes a",
+    "gesture read as stroke-then-retraction, which is how a real one is shaped."
+  ],
+  "clip": "presenter_01.mp4",
+  "default": "neutral",
+  "gestures": {
+    "clasped_rest": {
+      "start": 5.2,
+      "end": 9.9,
+      "role": "neutral",
+      "note": "hands clasped on the desk, minimal motion; the long calm passage"
+    },
+    "open_palms": {
+      "start": 1.05,
+      "end": 2.25,
+      "role": "present",
+      "note": "both hands open wide, palms up - the 'here is the thing' gesture"
+    },
+    "raised_together": {
+      "start": 3.8,
+      "end": 4.75,
+      "role": "stress",
+      "note": "hands raised and close together, more insistent"
+    }
+  }
+}

@@ -177,6 +177,7 @@ class PresenterSource:
         self.panel_size = panel_size
         self.sample_fps = sample_fps
         self.mask = panel_mask(panel_size)
+        self.clip_path: Optional[Path] = None
 
     @classmethod
     def load(
@@ -214,12 +215,39 @@ class PresenterSource:
             "presenter loop %s: %d frames at %.0f fps, panel %dx%d",
             video_path, len(frames), sample_fps, *panel_size,
         )
-        return cls(frames, panel_size, sample_fps)
+        source = cls(frames, panel_size, sample_fps)
+        # Kept so the gesture sidecar can be found beside the clip later.
+        source.clip_path = Path(video_path)
+        return source
 
-    def frame_at(self, t: float) -> Image.Image:
-        """Frame for time `t`, wrapping so the loop covers any scene length."""
-        idx = int(t * self.sample_fps) % len(self.frames)
-        return self.frames[idx]
+    def _frame_at_source(self, source_t: float) -> Image.Image:
+        """Frame at a position in the source clip. Clamped, not wrapped: a
+        gesture window lies inside the clip, so an out-of-range time is a
+        scheduling bug and should pin to an end rather than jump elsewhere."""
+        idx = int(source_t * self.sample_fps)
+        return self.frames[min(max(idx, 0), len(self.frames) - 1)]
 
-    def paste_onto(self, frame: Image.Image, box: Tuple[int, int], t: float) -> None:
-        frame.paste(self.frame_at(t), box, self.mask)
+    def frame_at(self, t: float, track=None) -> Image.Image:
+        """Frame for time `t`, choreographed by `track` if one is given.
+
+        The track is an argument rather than state on this object because one
+        source is shared by every scene in a job while the choreography is per
+        scene. MoviePy builds all the scene clips before pulling any frames, so
+        a track stored here would be overwritten by the last scene and every
+        scene would render with the wrong one.
+
+        Without a track the whole clip loops, which is what an unsegmented
+        avatar does.
+        """
+        if track is None:
+            idx = int(t * self.sample_fps) % len(self.frames)
+            return self.frames[idx]
+
+        source_a, source_b, weight = track.sample_at(t)
+        frame = self._frame_at_source(source_a)
+        if weight <= 0.0:
+            return frame
+        return Image.blend(frame, self._frame_at_source(source_b), weight)
+
+    def paste_onto(self, frame: Image.Image, box: Tuple[int, int], t: float, track=None) -> None:
+        frame.paste(self.frame_at(t, track), box, self.mask)
