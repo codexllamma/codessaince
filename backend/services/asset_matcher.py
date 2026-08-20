@@ -1,6 +1,9 @@
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 from models.schemas import FactCategory, TemplateType, VisualAssetSelection
+
+logger = logging.getLogger(__name__)
 
 ASSET_CATALOG = [
     {
@@ -135,6 +138,16 @@ def _prefer_library_image(
         dim_overlay_opacity=0.65,
     )
 
+  # Retrieval first: it reads the same library but ranks by what the scene
+  # actually says rather than by which category bucket the file happens to
+  # sit in, so an asset filed under ELIGIBILITY can still win a DEADLINE
+  # scene if its metadata describes that scene better. Everything below stays
+  # as the floor -- retrieval returning nothing is the normal case on a
+  # machine with no index built.
+  retrieved = _retrieve_asset(scene_text, ordered, selection)
+  if retrieved is not None:
+    return retrieved
+
   try:
     for category in ordered:
       image = image_library.select_image(category, scene_text=scene_text, seed=scene_text)
@@ -152,6 +165,46 @@ def _prefer_library_image(
     return selection
 
   return selection
+
+
+def _retrieve_asset(
+    scene_text: str,
+    ordered: List[str],
+    selection: VisualAssetSelection,
+) -> Optional[VisualAssetSelection]:
+  """Best RAG hit for this scene, or None to fall through to tag scoring.
+
+  Each preferred category is tried in order first, so a scene that really is
+  about a deadline still prefers a deadline asset when one exists. Only after
+  those miss does it search the library uncategorised -- that is where
+  retrieval earns its keep, finding the asset whose description fits the
+  narration even though it was filed elsewhere.
+  """
+  try:
+    from services.visual_rag import retriever
+  except Exception:
+    return None
+
+  try:
+    attempts: List[Optional[str]] = list(ordered)
+    attempts.append(None)  # uncategorised sweep of the whole library
+
+    for category in attempts:
+      hit = retriever.retrieve_best(scene_text, category=category)
+      if hit is None:
+        continue
+      record = hit.record
+      rel = str(record.path.relative_to(Path(__file__).resolve().parent.parent)).replace("\\", "/")
+      return VisualAssetSelection(
+          asset_id=f"rag_{record.asset_id.replace('/', '_')}",
+          asset_type="video_loop" if record.media_type == "video" else "static_graphic",
+          file_path=rel,
+          accent_color=selection.accent_color,
+          dim_overlay_opacity=0.65,
+      )
+  except Exception:  # retrieval must never break scene generation
+    logger.debug("visual retrieval failed; using tag scoring", exc_info=True)
+  return None
 
 
 # Used when a scene carries no facts of its own to key off.

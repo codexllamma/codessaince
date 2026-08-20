@@ -95,3 +95,7 @@ desktop.ini
 # Logs
 *.log
 logs/
+# Vector index built by scripts/build_visual_index.py. Regenerable from the
+# sidecars in assets/broll/library/, and the embeddings are derived data --
+# rebuild it rather than syncing a binary store between machines.
+data/chroma/

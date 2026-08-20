@@ -102,7 +102,17 @@ def run_pipeline(
     )
 
   # --------------------------------------------------------------- 2. scenes
-  _banner("2/7", "Scene generation")
+  _banner("2/7", "Scene generation + visual retrieval")
+  # Which retrieval layer answered is invisible in the finished video, so it
+  # is worth stating: a run that silently fell back to fuzzy matching looks
+  # exactly like one that used the vector index.
+  try:
+    from services.visual_rag import retriever as _visual_retriever
+
+    logger.info("visual backends: %s", _visual_retriever.describe_backends())
+  except Exception:
+    logger.info("visual backends: retrieval unavailable, using tag scoring")
+
   scenes = build_scenes_from_facts(facts)
   for s in scenes:
     asset = s.asset
