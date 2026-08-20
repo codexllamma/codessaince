@@ -56,6 +56,14 @@ static/font_tests/*
 assets/broll/fetched/
 assets/broll/.search_cache/
 
+# Same reasoning for the offline image library scripts/build_image_library.py
+# seeds from Wikimedia Commons: real photographs under real people's licences,
+# not something this project should mirror as tracked binaries. Re-seed with
+# `python scripts/build_image_library.py`, then eyeball the contact sheet it
+# writes before trusting anything it found — no automated filter can confirm
+# README §10.3's "no identifiable faces" the way a person looking at it can.
+assets/broll/library/
+
 # Local Uploads & Raw PDFs
 uploads/*
 !uploads/.gitkeep
