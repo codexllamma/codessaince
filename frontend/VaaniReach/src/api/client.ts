@@ -184,8 +184,9 @@ export const api = {
   },
 
   // 6. Render Video Broadcast
-  renderVideo: async (jobId: string): Promise<NoticeVideoJob> => {
-    const res = await fetch(`${BASE_URL}/api/jobs/${jobId}/render`, { method: 'POST' });
+  renderVideo: async (jobId: string, lang?: string): Promise<NoticeVideoJob> => {
+    const url = lang ? `${BASE_URL}/api/jobs/${jobId}/render?lang=${lang}` : `${BASE_URL}/api/jobs/${jobId}/render`;
+    const res = await fetch(url, { method: 'POST' });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },

@@ -550,9 +550,11 @@ def make_frame_function(
     lang: str = "en",
 ) -> Callable[[float], np.ndarray]:
     """Kinetic, audio-synchronized frame compositor with animated entrances and progress bar."""
+    import time
     W, H = canvas_size
     cx0, cy0, cx1, cy1 = pan_targets
     duration = scene.scene_duration_sec or 8.0
+    total_frames = max(1, round(duration * VIDEO_FPS))
     presenter_box = presenter_layout.panel_box[:2] if presenter_layout is not None else None
     content_box = presenter_layout.content_box if presenter_layout is not None else None
 
@@ -562,6 +564,14 @@ def make_frame_function(
     base_pill_sprite = _Sprite.from_layer(static_layers["alert_pill"])
     base_metric_sprite = _Sprite.from_layer(static_layers.get("metric_card")) if "metric_card" in static_layers else None
 
+    # Pre-cache active metric card sprite to eliminate expensive re-rendering during playback
+    active_metric_sprite = None
+    if "metric_card" in static_layers:
+        active_card_layer = _build_metric_card(
+            scene, lang, canvas_size, content_box, glow_intensity=0.85, scale_factor=1.03
+        )
+        active_metric_sprite = _Sprite.from_layer(active_card_layer)
+
     caption_sprites = {id(img): _Sprite.from_layer(img) for _, img in caption_cache}
 
     # Core fact audio timing window for active synchronization
@@ -569,7 +579,25 @@ def make_frame_function(
 
     accent_rgb = _hex_to_rgb(scene.asset.accent_color)
 
+    frame_counter = 0
+    t_last_log = time.time()
+
     def frame_function(t: float) -> np.ndarray:
+        nonlocal frame_counter, t_last_log
+        frame_counter += 1
+
+        # Real-time frame rendering progress log
+        now = time.time()
+        if frame_counter == 1 or frame_counter % 15 == 0 or frame_counter >= total_frames:
+            elapsed = now - t_last_log
+            inst_fps = 15.0 / elapsed if elapsed > 0 and frame_counter > 1 else 0.0
+            pct = (frame_counter / total_frames) * 100
+            print(
+                f"  [FRAME] Scene {scene.scene_id} ({lang.upper()}) | Frame {frame_counter:03d}/{total_frames:03d} ({pct:5.1f}%) | t={t:5.2f}s | Speed: {inst_fps:4.1f} fps",
+                flush=True,
+            )
+            t_last_log = now
+
         # 1. Ken Burns background with smooth pan and zoom
         frame = kenburns.render_frame(
             bg_source, t, duration, W, H, cx0, cy0, cx1, cy1, resample=resample
@@ -587,7 +615,6 @@ def make_frame_function(
         bar_w = int(W * progress_val)
         if bar_w > 0:
             draw.rectangle([0, 6, bar_w, 10], fill=accent_rgb + (230,))
-            # Glowing playhead tip
             draw.ellipse([bar_w - 4, 4, bar_w + 4, 12], fill=(255, 255, 255))
 
         # 4. Top Government Branding
@@ -599,7 +626,6 @@ def make_frame_function(
         pill_e = kenburns.ease_out_back(pill_p)
         pill_offset_y = int((1.0 - pill_e) * -40)
         if base_pill_sprite is not None and pill_p > 0.05:
-            # Subtle breathing pulse after entrance
             pulse_factor = 0.90 + 0.10 * math.sin(2 * math.pi * PULSE_HZ * t)
             pill_img = _with_alpha(base_pill_sprite.image, pill_p * pulse_factor)
             frame.paste(pill_img, (base_pill_sprite.box[0], base_pill_sprite.box[1] + pill_offset_y), pill_img)
@@ -612,36 +638,21 @@ def make_frame_function(
             text_img = _with_alpha(headline_sprite.image, text_p)
             frame.paste(text_img, (headline_sprite.box[0], headline_sprite.box[1] + text_offset_y), text_img)
 
-        # 7. AUDIO-SYNCHRONIZED METRIC CARD POP & GLOW
+        # 7. AUDIO-SYNCHRONIZED METRIC CARD POP & GLOW (Cached Fast Path)
         if "metric_card" in static_layers:
             card_p = min(max((t - 0.3) / 0.55, 0.0), 1.0)
             if card_p > 0.05:
                 card_e = kenburns.ease_out_back(card_p)
                 card_offset_y = int((1.0 - card_e) * 45)
 
-                # Check if core fact is currently being spoken
                 is_fact_spoken = False
-                glow_int = 0.0
-                card_scale = 1.0
-
                 if core_fact_timing is not None:
                     cf_start, cf_end = core_fact_timing
                     if cf_start - 0.15 <= t <= cf_end + 0.25:
                         is_fact_spoken = True
-                        rel_t = t - cf_start
-                        pulse_osc = 0.5 + 0.5 * math.sin(2 * math.pi * 2.2 * rel_t)
-                        glow_int = float(pulse_osc)
-                        card_scale = 1.04
 
-                # Dynamic Metric Card rendering during active fact delivery
-                if is_fact_spoken:
-                    active_card_layer = _build_metric_card(
-                        scene, lang, canvas_size, content_box,
-                        glow_intensity=glow_int, scale_factor=card_scale,
-                    )
-                    card_sprite = _Sprite.from_layer(active_card_layer)
-                    if card_sprite is not None:
-                        card_sprite.paste_onto(frame, offset_y=card_offset_y)
+                if is_fact_spoken and active_metric_sprite is not None:
+                    active_metric_sprite.paste_onto(frame, offset_y=card_offset_y)
                 elif base_metric_sprite is not None:
                     card_img = _with_alpha(base_metric_sprite.image, card_p)
                     frame.paste(card_img, (base_metric_sprite.box[0], base_metric_sprite.box[1] + card_offset_y), card_img)
@@ -717,8 +728,6 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
     )
     clip = VideoClip(frame_function=frame_fn, duration=scene.scene_duration_sec).with_fps(VIDEO_FPS)
     if bg_video is not None:
-        # Tie the reader's lifetime to the clip so render_job's close() loop
-        # releases it; a leaked reader keeps an ffmpeg subprocess alive.
         clip._broll_background = bg_video
 
     audio_file = resolve_audio_path(scene.audio_path)
@@ -741,26 +750,39 @@ def _write_with_fallback(clip, out_path: str, codec_pref: str) -> None:
     if codec_pref == "h264_nvenc" and not _nvenc_unavailable:
         try:
             clip.write_videofile(
-                out_path, fps=VIDEO_FPS, codec="h264_nvenc", preset="p5",
+                out_path, fps=VIDEO_FPS, codec="h264_nvenc", preset="p4",
+                threads=4,
                 ffmpeg_params=["-rc", "vbr", "-cq", "23", "-b:v", "8M", "-maxrate", "12M"],
                 audio_codec="aac", audio_bitrate="192k", pixel_format="yuv420p",
+                logger="bar",
             )
             return
         except Exception:
             _nvenc_unavailable = True
             logger.warning(
-                "NVENC encode failed; using libx264 for this and subsequent renders", exc_info=True
+                "NVENC encode failed; using accelerated libx264 for this and subsequent renders", exc_info=True
             )
 
     clip.write_videofile(
-        out_path, fps=VIDEO_FPS, codec="libx264", preset="veryfast",
+        out_path, fps=VIDEO_FPS, codec="libx264", preset="ultrafast",
+        threads=4,
+        ffmpeg_params=["-threads", "4"],
         audio_codec="aac", audio_bitrate="192k", pixel_format="yuv420p",
+        logger="bar",
     )
 
 
 def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc", canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT)) -> str:
+    import time
     _ffmpeg.ensure_ffmpeg_binary_env()
     from moviepy import concatenate_videoclips
+
+    t0 = time.time()
+    total_dur = sum(s.scene_duration_sec or 0.0 for s in scenes)
+    print(f"\n=======================================================", flush=True)
+    print(f"[RENDER JOB START] Language: {lang.upper()} | Scenes: {len(scenes)} | Total Duration: {total_dur:.1f}s", flush=True)
+    print(f"[RENDER JOB TARGET] Output Path: {out_path}", flush=True)
+    print(f"=======================================================", flush=True)
 
     presenter_source, presenter_layout = resolve_presenter(lang, canvas_size)
 
@@ -771,6 +793,8 @@ def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc",
     final = concatenate_videoclips(clips, method="chain")
     try:
         _write_with_fallback(final, out_path, codec_pref)
+        elapsed = time.time() - t0
+        print(f"[RENDER JOB COMPLETE] {lang.upper()} finished in {elapsed:.2f}s (Avg Speed: {(total_dur*VIDEO_FPS)/elapsed:.1f} fps)\n", flush=True)
     finally:
         for clip in (final, *clips):
             background = getattr(clip, "_broll_background", None)

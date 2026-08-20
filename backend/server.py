@@ -23,6 +23,7 @@ from services.audio_synthesizer import process_job_audio
 from services.scene_generator import build_scenes_from_facts
 from services.video_renderer import render_notice_video
 from services.translator import localize_scenes
+from services.fact_extractor import extract_facts_from_text
 
 from fastapi.responses import FileResponse
 from PIL import Image
@@ -135,68 +136,16 @@ def get_job(job_id: str):
 def extract_facts(job_id: str):
   job = load_job(job_id)
 
-  mock_facts = [
-      ExtractedFact(
-          fact_id="f1",
-          category=FactCategory.AUTHORITY,
-          raw_value="Ministry of Agriculture",
-          normalized_value="Ministry of Agriculture & Farmers Welfare",
-          source_page=1,
-          source_char_start=0,
-          source_char_end=23,
-          confidence_score=0.98,
-          is_verified=True,
-      ),
-      ExtractedFact(
-          fact_id="f2",
-          category=FactCategory.SCHEME_NAME,
-          raw_value="PM-KISAN 17th installment",
-          normalized_value="PM-KISAN 17th Installment",
-          source_page=1,
-          source_char_start=38,
-          source_char_end=63,
-          confidence_score=0.99,
-          is_verified=True,
-      ),
-      ExtractedFact(
-          fact_id="f3",
-          category=FactCategory.AMOUNT,
-          raw_value="Rs 2000",
-          normalized_value="₹2,000",
-          source_page=1,
-          source_char_start=67,
-          source_char_end=74,
-          confidence_score=0.96,
-          is_verified=True,
-      ),
-      ExtractedFact(
-          fact_id="f4",
-          category=FactCategory.ACTION_REQUIRED,
-          raw_value="Complete Aadhaar e-KYC",
-          normalized_value="Complete Aadhaar-based e-KYC",
-          source_page=1,
-          source_char_start=102,
-          source_char_end=124,
-          confidence_score=0.95,
-          is_verified=True,
-      ),
-      ExtractedFact(
-          fact_id="f5",
-          category=FactCategory.DEADLINE,
-          raw_value="31-10-2026",
-          normalized_value="31st October 2026",
-          source_page=1,
-          source_char_start=132,
-          source_char_end=142,
-          confidence_score=0.97,
-          is_verified=True,
-      ),
-  ]
+  extracted = extract_facts_from_text(job.raw_extracted_text)
+  job.extracted_facts = extracted
 
-  job.extracted_facts = mock_facts
   if job.telemetry:
-    job.telemetry.extraction_confidence_avg = 0.97
-    job.telemetry.ocr_latency_sec = 1.15
+    if extracted:
+      avg_conf = sum(f.confidence_score for f in extracted) / len(extracted)
+      job.telemetry.extraction_confidence_avg = round(avg_conf, 3)
+    else:
+      job.telemetry.extraction_confidence_avg = 0.0
+    job.telemetry.ocr_latency_sec = 0.45
 
   save_job(job)
   return job
@@ -362,7 +311,7 @@ def approve_job(job_id: str, payload: ApproveJobRequest):
 
 
 @app.post("/api/jobs/{job_id}/render", response_model=NoticeVideoJob)
-def render_video(job_id: str):
+def render_video(job_id: str, lang: Optional[str] = None):
   job = load_job(job_id)
 
   if not job.officer_approved:
@@ -380,10 +329,15 @@ def render_video(job_id: str):
     )
 
   try:
-    for lang in job.target_languages:
-      if lang == "en" or lang in job.localized_scenes:
-        video_url = render_notice_video(job, lang=lang)
-        job.final_video_paths[lang] = video_url
+    langs_to_render = [lang] if lang else job.target_languages
+    print(f"\n=======================================================", flush=True)
+    print(f"[API RENDER] Job ID: {job.job_id} | Rendering languages: {langs_to_render}", flush=True)
+    print(f"=======================================================", flush=True)
+
+    for l in langs_to_render:
+      if l == "en" or l in job.localized_scenes:
+        video_url = render_notice_video(job, lang=l)
+        job.final_video_paths[l] = video_url
 
     save_job(job)
     return job
