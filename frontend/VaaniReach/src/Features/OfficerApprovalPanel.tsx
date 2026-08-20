@@ -5,6 +5,11 @@ import {
   Video,
   Download,
   Loader2,
+  FileText,
+  Copy,
+  Check,
+  X,
+  Eye,
 } from 'lucide-react';
 import type { NoticeVideoJob } from '../api/client';
 import { api } from '../api/client';
@@ -40,6 +45,9 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
     authority: false,
   });
   const [officerNotes, setOfficerNotes] = useState<string>('');
+  const [showSrtModal, setShowSrtModal] = useState<boolean>(false);
+  const [copiedSrt, setCopiedSrt] = useState<boolean>(false);
+  const [srtTextContent, setSrtTextContent] = useState<string>('');
 
   const videoPaths = job.final_video_paths || {};
   const renderedLangs = Object.keys(videoPaths);
@@ -57,6 +65,31 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
 
   const handleApprove = async () => {
     await onApproveJob(officerNotes);
+  };
+
+  const handleInspectSrt = async () => {
+    const srtRel = job.final_srt_paths ? job.final_srt_paths[activeVideoLang] : null;
+    if (srtRel) {
+      try {
+        const res = await fetch(api.getSrtUrl(srtRel));
+        if (res.ok) {
+          const text = await res.text();
+          setSrtTextContent(text);
+          setShowSrtModal(true);
+          return;
+        }
+      } catch (err) {
+        console.error('Failed to load SRT file:', err);
+      }
+    }
+  };
+
+  const handleCopySrt = () => {
+    if (srtTextContent) {
+      navigator.clipboard.writeText(srtTextContent);
+      setCopiedSrt(true);
+      setTimeout(() => setCopiedSrt(false), 2000);
+    }
   };
 
   return (
@@ -304,14 +337,38 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
               Output URI: {videoPaths[activeVideoLang]}
             </div>
 
-            <a
-              href={api.getVideoUrl(videoPaths[activeVideoLang] || '')}
-              download={`VaaniReach_${job.job_id}_${activeVideoLang}.mp4`}
-              className="btn-primary py-2 px-5 text-xs font-bold"
-            >
-              <Download className="w-4 h-4" />
-              Download High-Res MP4 ({activeVideoLang.toUpperCase()})
-            </a>
+            <div className="flex flex-wrap items-center gap-3">
+              {job.final_srt_paths && job.final_srt_paths[activeVideoLang] && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleInspectSrt}
+                    className="btn-secondary py-2 px-3.5 text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <Eye className="w-4 h-4 text-cyan-400" />
+                    Inspect SRT Cues
+                  </button>
+
+                  <a
+                    href={api.getSrtUrl(job.final_srt_paths[activeVideoLang])}
+                    download={`VaaniReach_${job.job_id}_${activeVideoLang}.srt`}
+                    className="btn-secondary py-2 px-4 text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <FileText className="w-4 h-4 text-amber-400" />
+                    Download SRT Subtitles ({activeVideoLang.toUpperCase()})
+                  </a>
+                </>
+              )}
+
+              <a
+                href={api.getVideoUrl(videoPaths[activeVideoLang] || '')}
+                download={`VaaniReach_${job.job_id}_${activeVideoLang}.mp4`}
+                className="btn-primary py-2 px-5 text-xs font-bold flex items-center gap-1.5"
+              >
+                <Download className="w-4 h-4" />
+                Download High-Res MP4 ({activeVideoLang.toUpperCase()})
+              </a>
+            </div>
           </div>
 
           {/* Telemetry Drawer */}
@@ -343,6 +400,53 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* SRT Inspection Modal */}
+      {showSrtModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0B1120] border border-cyan-500/30 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl space-y-4 p-6">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-amber-400" />
+                <h4 className="text-base font-bold text-white">
+                  Broadcast SRT Subtitle Cues ({activeVideoLang.toUpperCase()})
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSrtModal(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-[#070A14] border border-white/10 rounded-xl p-4 max-h-96 overflow-y-auto font-mono text-xs text-emerald-300 whitespace-pre-wrap">
+              {srtTextContent}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCopySrt}
+                className="btn-secondary py-2 px-4 text-xs font-bold flex items-center gap-1.5"
+              >
+                {copiedSrt ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                {copiedSrt ? 'Copied to Clipboard!' : 'Copy SRT Content'}
+              </button>
+
+              <a
+                href={api.getSrtUrl(job.final_srt_paths ? job.final_srt_paths[activeVideoLang] : '')}
+                download={`VaaniReach_${job.job_id}_${activeVideoLang}.srt`}
+                className="btn-primary py-2 px-4 text-xs font-bold flex items-center gap-1.5"
+              >
+                <Download className="w-4 h-4" />
+                Download .SRT
+              </a>
+            </div>
+          </div>
         </div>
       )}
     </div>

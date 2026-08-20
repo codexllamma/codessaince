@@ -86,6 +86,7 @@ export interface NoticeVideoJob {
   telemetry?: PipelineTelemetry;
   officer_approved: boolean;
   final_video_paths: Record<string, string>;
+  final_srt_paths?: Record<string, string>;
 }
 
 export const api = {
@@ -202,6 +203,12 @@ export const api = {
 
   // Resolve static audio URL
   getAudioUrl: (relativePath: string) => {
+    if (!relativePath) return '';
+    return relativePath.startsWith('http') ? relativePath : `${BASE_URL}${relativePath}`;
+  },
+
+  // Resolve static SRT URL
+  getSrtUrl: (relativePath: string) => {
     if (!relativePath) return '';
     return relativePath.startsWith('http') ? relativePath : `${BASE_URL}${relativePath}`;
   },

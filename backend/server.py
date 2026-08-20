@@ -121,6 +121,7 @@ def create_job(payload: CreateJobRequest):
       telemetry=PipelineTelemetry(),
       officer_approved=False,
       final_video_paths={},
+      final_srt_paths={},
   )
 
   save_job(job)
@@ -338,6 +339,7 @@ def render_video(job_id: str, lang: Optional[str] = None):
       if l == "en" or l in job.localized_scenes:
         video_url = render_notice_video(job, lang=l)
         job.final_video_paths[l] = video_url
+        job.final_srt_paths[l] = f"/static/videos/{job.job_id}_final_{l}.srt"
 
     save_job(job)
     return job

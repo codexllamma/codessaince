@@ -178,6 +178,7 @@ class NoticeVideoJob(BaseModel):
   telemetry: Optional[PipelineTelemetry] = None
   officer_approved: bool = False
   final_video_paths: Dict[str, str] = Field(default_factory=dict)
+  final_srt_paths: Dict[str, str] = Field(default_factory=dict)
 
   @model_validator(mode="after")
   def validate_job_invariants(self) -> "NoticeVideoJob":
@@ -198,11 +199,18 @@ class NoticeVideoJob(BaseModel):
             f"not match master_scenes_en ordering ({expected_scene_ids})"
         )
 
-    # 2. final_video_paths keys must be a subset of target_languages
+    # 2. final_video_paths and final_srt_paths keys must be a subset of target_languages
     for lang in self.final_video_paths.keys():
       if lang not in self.target_languages:
         raise ValueError(
             f"final_video_paths contains '{lang}' which is not in target_languages "
+            f"({self.target_languages})"
+        )
+
+    for lang in self.final_srt_paths.keys():
+      if lang not in self.target_languages:
+        raise ValueError(
+            f"final_srt_paths contains '{lang}' which is not in target_languages "
             f"({self.target_languages})"
         )
 
