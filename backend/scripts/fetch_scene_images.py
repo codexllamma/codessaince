@@ -39,6 +39,7 @@ CX_URL = "https://programmablesearchengine.google.com/controlpanel/all"
 def check() -> int:
   """Diagnose the setup. Costs one query only if both values are present."""
   key, cx = image_fetcher._credentials()
+  print(f"interpreter       : {sys.executable}")
   print(f"GOOGLE_API_KEY    : {'set (' + key[:10] + '…, ' + str(len(key)) + ' chars)' if key else 'NOT SET'}")
   print(f"SEARCH_ENGINE_ID  : {'set (' + cx[:10] + '…)' if cx else 'NOT SET'}")
 
@@ -51,7 +52,23 @@ def check() -> int:
     print(f"\nSet GOOGLE_API_KEY in {BACKEND_ROOT / '.env'} (see .env.example).")
     return 1
 
-  import requests
+  try:
+    import requests
+  except ModuleNotFoundError:
+    # Nearly always the wrong virtualenv rather than a missing install:
+    # requests is pinned in requirements.lock, so an environment without it is
+    # an environment that was never set up for this project.
+    print(f"\n[FAIL] 'requests' is not installed in the interpreter running this script.")
+    print(f"       running: {sys.executable}")
+    expected = BACKEND_ROOT.parent / ".venv" / "Scripts" / "python.exe"
+    if expected.is_file() and Path(sys.executable).resolve() != expected.resolve():
+      print(f"       expected: {expected}")
+      print(f"\n       That looks like a virtualenv from a different project.")
+      print(f"       Activate this project's instead:\n"
+            f"         {BACKEND_ROOT.parent / '.venv' / 'Scripts' / 'activate.bat'}")
+    else:
+      print("\n       Install dependencies:  pip install -r requirements.lock")
+    return 1
 
   # A deliberately invalid cx still tells us whether the key works and the API
   # is switched on, so this is worth running before the cx exists.
