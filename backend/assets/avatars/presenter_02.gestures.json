@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Gesture vocabulary for presenter_02.mp4 (trimmed from source 4.0-13.0s).",
+    "Windows located with scripts/segment_gestures.py, then named by eye.",
+    "",
+    "This presenter gestures almost continuously - the motion profile's median is",
+    "1.63 against presenter_01's 0.69 - so there is no truly still pose to use as",
+    "neutral. 'hands_together' is the calmest passage rather than a motionless one,",
+    "which suits a presenter who talks with their hands and would look wrong frozen.",
+    "",
+    "Roles: neutral (resting), present (open/explanatory, used on core facts),",
+    "stress (emphatic, used on deadline scenes)."
+  ],
+  "clip": "presenter_02.mp4",
+  "default": "neutral",
+  "gestures": {
+    "hands_together": {
+      "start": 6.88,
+      "end": 8.64,
+      "role": "neutral",
+      "note": "hands held together at chest, small steady motion; the calmest stretch"
+    },
+    "open_hands": {
+      "start": 4.8,
+      "end": 5.52,
+      "role": "present",
+      "note": "hands drawn apart, palms open - the explanatory beat"
+    },
+    "quick_fingers": {
+      "start": 0.72,
+      "end": 1.6,
+      "role": "stress",
+      "note": "faster, tighter finger movement; reads as insistent"
+    }
+  }
+}

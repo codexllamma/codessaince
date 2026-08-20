@@ -33,14 +33,43 @@
     "licence": "Procedurally generated placeholder, no real person depicted",
     "disclosure_label": "AI-GENERATED PRESENTER"
   },
+  "_language_assignment_note": [
+    "Which presenter fronts which language is a product decision, not a technical",
+    "one - the split below is arbitrary, chosen only so all three get exercised.",
+    "resolve() takes an exact language match first and falls back to '*', so",
+    "moving a code between entries is the whole change.",
+    "",
+    "presenter_03 has no .gestures.json sidecar on purpose: it is a tight",
+    "head-and-shoulders shot whose hands are out of frame almost throughout, so",
+    "there is no gesture vocabulary to map. It loops straight through instead,",
+    "which is the documented behaviour for an unsegmented avatar."
+  ],
   "avatars": [
     {
       "avatar_id": "presenter_01",
       "file": "presenter_01.mp4",
-      "languages": ["*"],
+      "languages": ["en", "*"],
       "display_name": "Presenter 01",
       "source": "licensed_stock",
       "licence": "UNCONFIRMED - source file was named 5940726-uhd_3840_2160_25fps.mp4, which is the Pexels download pattern. Replace with the actual licence and URL, or change source to consented_performer if this was filmed in-house.",
+      "disclosure_label": "NOT A GOVERNMENT OFFICIAL - AI-NARRATED"
+    },
+    {
+      "avatar_id": "presenter_02",
+      "file": "presenter_02.mp4",
+      "languages": ["hi", "mr"],
+      "display_name": "Presenter 02",
+      "source": "licensed_stock",
+      "licence": "UNCONFIRMED - source file was named 5941016-uhd_3840_2160_25fps.mp4, which is the Pexels download pattern. Same shoot as presenter_01 by the look of the set.",
+      "disclosure_label": "NOT A GOVERNMENT OFFICIAL - AI-NARRATED"
+    },
+    {
+      "avatar_id": "presenter_03",
+      "file": "presenter_03.mp4",
+      "languages": ["ta", "te", "bn"],
+      "display_name": "Presenter 03",
+      "source": "licensed_stock",
+      "licence": "UNCONFIRMED - source file was named 7643311-uhd_4096_2160_25fps.mp4, which is the Pexels download pattern.",
       "disclosure_label": "NOT A GOVERNMENT OFFICIAL - AI-NARRATED"
     }
   ]
