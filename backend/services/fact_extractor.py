@@ -262,3 +262,11 @@ def extract_facts_from_text(raw_text: str) -> List[ExtractedFact]:
             fact_id_counter += 1
 
     return facts
+
+
+class FactExtractor:
+    """Grounded entity extraction and fact normalization interface."""
+
+    def extract_facts(self, raw_text: str) -> List[ExtractedFact]:
+        """Extracts facts from raw extracted notice text."""
+        return extract_facts_from_text(raw_text)

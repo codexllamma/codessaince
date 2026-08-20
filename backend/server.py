@@ -34,10 +34,14 @@ JOBS_DIR.mkdir(parents=True, exist_ok=True)
 Path("static/audio").mkdir(parents=True, exist_ok=True)
 Path("static/videos").mkdir(parents=True, exist_ok=True)
 
+from api.routes.upload import router as upload_router
+
 app = FastAPI(
     title="IndicGov-Sentinel Server",
     version="1.0.0",
 )
+
+app.include_router(upload_router)
 
 app.add_middleware(
     CORSMiddleware,
