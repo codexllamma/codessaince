@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "Pre-baked presenter loops. Drop an MP4 in this folder and move an entry into",
+    "'avatars' below; no code change is needed. An entry whose file is missing is",
+    "skipped with a warning, so it is safe to list avatars before generating them.",
+    "",
+    "'avatars' is empty by default, which disables the presenter and renders the",
+    "normal full-width layout. To try it, copy the entry from '_example_entry'",
+    "into 'avatars' — placeholder_m01.mp4 ships in this folder for exactly that.",
+    "",
+    "Required fields: avatar_id, file, languages, source, licence, disclosure_label.",
+    "",
+    "'source' must be one of: synthetic | licensed_stock | consented_performer.",
+    "Animating a real, identifiable official's likeness is not permitted — that is",
+    "a deepfake of a named public figure, and no disclosure label makes it",
+    "acceptable for government communications. avatar_registry rejects any other",
+    "value at load time.",
+    "",
+    "'disclosure_label' is rendered on screen for the whole time the presenter is",
+    "visible. README section 21 requires computer-narrated output to be labelled;",
+    "a photoreal presenter makes that requirement stronger, not weaker.",
+    "",
+    "'languages' accepts language codes and '*' as a catch-all.",
+    "Clips should be 6-12s, seamlessly looping, H.264 yuv420p. Portrait framing",
+    "suits the panel best; landscape clips are centre-cropped to fit."
+  ],
+  "_example_entry": {
+    "avatar_id": "placeholder_m01",
+    "file": "placeholder_m01.mp4",
+    "languages": ["*"],
+    "display_name": "Placeholder Presenter",
+    "source": "synthetic",
+    "licence": "Procedurally generated placeholder, no real person depicted",
+    "disclosure_label": "AI-GENERATED PRESENTER"
+  },
+  "avatars": []
+}

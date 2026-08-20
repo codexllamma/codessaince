@@ -219,6 +219,47 @@ ffmpeg -y -ss 4.0 -i static\videos\job_002_final_hi.mp4 -update 1 -vframes 1 fra
 
 ---
 
+## 6b. Optional: the split-screen presenter
+
+Off by default. `assets/avatars/manifest.json` has an empty `avatars` list, so
+rendering uses the normal full-width layout.
+
+To try it, copy the block under `_example_entry` into `avatars`. A placeholder
+clip (`placeholder_m01.mp4`) ships in that folder, so this works immediately:
+
+```powershell
+python scripts\render_fixture_demo.py job libx264
+```
+
+The presenter appears on the left with an on-screen "AI-GENERATED PRESENTER"
+label, the fact card moves to the right panel, and captions stay full width.
+
+To use a real clip, drop the MP4 in `assets/avatars/` and add an entry. No code
+changes. Generating one with LivePortrait, which ships its own sample portraits
+and driving videos:
+
+```bash
+git clone https://github.com/KwaiVGI/LivePortrait && cd LivePortrait
+python inference.py -s assets/examples/source/s9.jpg -d assets/examples/driving/d0.mp4
+```
+
+Trim the result to a clean 6-12s loop and copy it across.
+
+**Cost:** the loop is decoded once per job, not per frame — about 1.4s to load
+and 137MB cached, adding roughly 1ms (3%) per rendered frame.
+
+**Two rules enforced in code, not by review:**
+
+- `source` must be `synthetic`, `licensed_stock` or `consented_performer`.
+  The registry refuses to load anything else. Animating a real, identifiable
+  official's likeness is a deepfake of a public figure in their official
+  capacity — filming a consenting teammate is the fastest safe option and is
+  what `consented_performer` is for.
+- `disclosure_label` must be non-empty. There is no code path that renders an
+  unlabelled synthetic presenter.
+
+---
+
 ## 7. Troubleshooting
 
 **Indic text looks subtly wrong / vowel marks on the wrong side**

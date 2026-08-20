@@ -5,7 +5,7 @@ import json
 import pytest
 from PIL import Image
 
-from compositor import presenter
+from compositor import layers, presenter
 from services import avatar_registry
 
 
@@ -93,6 +93,83 @@ def test_presenter_panel_carries_the_label_and_fits_the_panel():
     frame = Image.new("RGB", (720, 1280), (40, 40, 40))
     panel = presenter.build_presenter_panel(frame, "AI-GENERATED PRESENTER", layout)
     assert panel.size == layout.panel_size
+
+
+PLACEHOLDER = avatar_registry.AVATARS_DIR / "placeholder_m01.mp4"
+needs_placeholder = pytest.mark.skipif(
+    not PLACEHOLDER.is_file(), reason="placeholder avatar clip not present"
+)
+
+
+@needs_placeholder
+def test_presenter_source_loads_and_wraps_around():
+    """A short loop must cover a longer scene by wrapping, not running out."""
+    layout = presenter.compute_layout((1920, 1080), caption_reserve=238)
+    src = presenter.PresenterSource.load(
+        str(PLACEHOLDER), layout, "AI-GENERATED PRESENTER", "en"
+    )
+    assert len(src.frames) > 0
+    assert src.frames[0].size == layout.panel_size
+
+    loop_len = len(src.frames) / src.sample_fps
+    # Well past the end of the clip: must wrap, not raise or clamp.
+    assert src.frame_at(loop_len * 3 + 1.7) is not None
+    assert src.frame_at(0.0) is src.frame_at(loop_len)
+
+
+@needs_placeholder
+def test_scene_renders_with_presenter_active():
+    from tests.fixtures.scenes_en_fixture import get_fixture_scenes
+
+    canvas = (1920, 1080)
+    layout = presenter.compute_layout(canvas, caption_reserve=238)
+    src = presenter.PresenterSource.load(str(PLACEHOLDER), layout, "AI-GENERATED PRESENTER", "en")
+
+    scene = get_fixture_scenes()[1]
+    clip = layers.render_scene_clip(scene, "en", 0, canvas, src, layout)
+    try:
+        frame = clip.get_frame(1.0)
+        assert frame.shape == (1080, 1920, 3)
+    finally:
+        clip.close()
+
+
+def test_resolve_presenter_is_none_when_no_avatar(monkeypatch):
+    """With no avatar installed the compositor must fall back silently."""
+    monkeypatch.setattr(avatar_registry, "resolve", lambda lang, manifest_path=None: None)
+    src, layout = layers.resolve_presenter("en", (1920, 1080))
+    assert src is None and layout is None
+
+
+def test_broken_avatar_degrades_instead_of_failing_render(monkeypatch, tmp_path):
+    """A corrupt clip should cost the presenter, not the whole video."""
+    bad = tmp_path / "broken.mp4"
+    bad.write_bytes(b"not a video")
+    fake = avatar_registry.Avatar(
+        avatar_id="broken_01", file_path=bad, languages=("en",),
+        display_name="Broken", source="synthetic", licence="n/a",
+        disclosure_label="AI-GENERATED PRESENTER",
+    )
+    monkeypatch.setattr(avatar_registry, "resolve", lambda lang, manifest_path=None: fake)
+    src, layout = layers.resolve_presenter("en", (1920, 1080))
+    assert src is None and layout is None
+
+
+def test_content_box_keeps_static_layers_clear_of_the_presenter():
+    """Fact-card layers must not stray into the presenter panel."""
+    from tests.fixtures.scenes_en_fixture import get_fixture_scenes
+
+    canvas = (1920, 1080)
+    layout = presenter.compute_layout(canvas, caption_reserve=238)
+    scene = get_fixture_scenes()[1]
+    built = layers.build_static_layers(scene, "en", canvas, layout.content_box)
+
+    panel_right = layout.panel_box[2]
+    for name, layer in built.items():
+        bbox = layer.getbbox()
+        if bbox is None:
+            continue
+        assert bbox[0] >= panel_right, f"{name} starts at x={bbox[0]}, inside the presenter panel"
 
 
 def test_layout_leaves_room_for_captions_and_content():

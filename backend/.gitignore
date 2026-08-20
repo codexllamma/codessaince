@@ -43,6 +43,10 @@ static/font_tests/*
 !static/videos/.gitkeep
 !static/audio/.gitkeep
 
+# Presenter avatar loops are inputs, not generated deliverables: the tests and
+# the documented try-it path both need placeholder_m01.mp4 present.
+!assets/avatars/*.mp4
+
 # Local Uploads & Raw PDFs
 uploads/*
 !uploads/.gitkeep
