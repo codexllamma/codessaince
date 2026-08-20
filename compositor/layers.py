@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Callable, Dict, Tuple
+from pathlib import Path
+from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -47,11 +48,28 @@ def build_background_source(
     z_max: float = kenburns.Z_MAX_DEFAULT,
 ) -> Image.Image:
     """Procedural tinted gradient background (README §10.2 fallback), pre-rendered
-    once at >= z_max * canvas size so Ken Burns can crop/pan without upscaling."""
+    once at >= z_max * canvas size so Ken Burns can crop/pan without upscaling.
+
+    Video-loop and static-graphic assets are not composited yet. Rather than
+    refusing them, we degrade to the gradient — §10.2 already specifies that a
+    scene with no usable asset falls back to a tinted mesh gradient, which
+    "always looks intentional and never looks broken". The scene generator
+    emits video_loop paths for B-roll that is not in the repo yet, so this is
+    the live path until those assets are licensed and added.
+    """
     if asset.asset_type != "mesh_gradient":
-        raise NotImplementedError(
-            f"asset_type={asset.asset_type!r} not supported in this slice; only mesh_gradient is implemented"
-        )
+        path = Path(asset.file_path) if asset.file_path else None
+        if path is not None and path.exists():
+            logger.warning(
+                "asset %s (%s) exists but %s compositing is not implemented yet; "
+                "using the mesh_gradient fallback",
+                asset.asset_id, asset.file_path, asset.asset_type,
+            )
+        else:
+            logger.info(
+                "asset %s (%s) not present on disk; using the mesh_gradient fallback (README §10.2)",
+                asset.asset_id, asset.file_path,
+            )
 
     w, h = round(z_max * canvas_w), round(z_max * canvas_h)
     accent = _hex_to_rgb(asset.accent_color)
@@ -72,7 +90,9 @@ def build_background_source(
     gradient += rng.normal(0, 4, size=(h, w, 1))
 
     gradient = np.clip(gradient, 0, 255).astype(np.uint8)
-    img = Image.fromarray(gradient, mode="RGB").convert("RGBA")
+    # Mode is inferred from the (h, w, 3) uint8 shape; passing it explicitly is
+    # deprecated and removed in Pillow 13.
+    img = Image.fromarray(gradient).convert("RGBA")
 
     if asset.dim_overlay_opacity > 0:
         overlay = Image.new("RGBA", (w, h), (0, 0, 0, round(255 * asset.dim_overlay_opacity)))
@@ -203,6 +223,24 @@ def make_frame_function(
     return frame_function
 
 
+def resolve_audio_path(audio_path: Optional[str]) -> Optional[Path]:
+    """Locate a scene's audio file on disk, or None if it isn't there.
+
+    The synthesis stage records audio_path as a web-style URL served by the
+    API ("/static/audio/scene_1_en.mp3"), while fixtures use ordinary
+    filesystem paths. Accept both rather than making callers normalise.
+    """
+    if not audio_path:
+        return None
+    direct = Path(audio_path)
+    if direct.exists():
+        return direct
+    relative = Path(audio_path.lstrip("/\\"))
+    if relative.exists():
+        return relative
+    return None
+
+
 def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT)):
     from moviepy import AudioFileClip, VideoClip
 
@@ -219,13 +257,32 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
 
     frame_fn = make_frame_function(scene, static_layers, caption_cache, bg_source, pan_targets, canvas_size)
     clip = VideoClip(frame_function=frame_fn, duration=scene.scene_duration_sec).with_fps(VIDEO_FPS)
-    if scene.audio_path:
-        clip = clip.with_audio(AudioFileClip(scene.audio_path))
+
+    audio_file = resolve_audio_path(scene.audio_path)
+    if audio_file is not None:
+        clip = clip.with_audio(AudioFileClip(str(audio_file)))
+    elif scene.audio_path:
+        logger.warning(
+            "scene %s audio_path %r could not be resolved on disk; rendering silent",
+            scene.scene_id, scene.audio_path,
+        )
     return clip
 
 
+_nvenc_unavailable = False
+
+
 def _write_with_fallback(clip, out_path: str, codec_pref: str) -> None:
-    if codec_pref == "h264_nvenc":
+    """Encode with NVENC when it works, else libx264 (README §15).
+
+    An `ffmpeg -encoders` probe is not sufficient to detect a working NVENC:
+    the encoder can be compiled in and still fail at runtime if the installed
+    driver is older than the build's SDK. So we attempt it and remember the
+    failure — otherwise a 6-language job pays six doomed encode attempts.
+    """
+    global _nvenc_unavailable
+
+    if codec_pref == "h264_nvenc" and not _nvenc_unavailable:
         try:
             clip.write_videofile(
                 out_path, fps=VIDEO_FPS, codec="h264_nvenc", preset="p5",
@@ -234,7 +291,10 @@ def _write_with_fallback(clip, out_path: str, codec_pref: str) -> None:
             )
             return
         except Exception:
-            logger.warning("NVENC encode failed, falling back to libx264", exc_info=True)
+            _nvenc_unavailable = True
+            logger.warning(
+                "NVENC encode failed; using libx264 for this and subsequent renders", exc_info=True
+            )
 
     clip.write_videofile(
         out_path, fps=VIDEO_FPS, codec="libx264", preset="veryfast",
@@ -248,5 +308,15 @@ def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc",
 
     clips = [render_scene_clip(s, lang, i, canvas_size) for i, s in enumerate(scenes)]
     final = concatenate_videoclips(clips, method="chain")
-    _write_with_fallback(final, out_path, codec_pref)
+    try:
+        _write_with_fallback(final, out_path, codec_pref)
+    finally:
+        # Windows keeps the reader subprocess and the audio file handle open
+        # until the clip is closed; a leaked handle blocks the next render of
+        # the same job from overwriting its own output.
+        for clip in (final, *clips):
+            try:
+                clip.close()
+            except Exception:
+                logger.debug("failed to close clip", exc_info=True)
     return out_path
