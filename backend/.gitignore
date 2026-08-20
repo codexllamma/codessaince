@@ -47,6 +47,15 @@ static/font_tests/*
 # the documented try-it path both need placeholder_m01.mp4 present.
 !assets/avatars/*.mp4
 
+# Images pulled from the web by services/image_fetcher.py, and the cached
+# search responses that found them. These are other people's pictures held
+# under whatever licence the publisher declared — they are a local cache, not
+# project assets, and must not be redistributed through this repository. The
+# .source.json sidecars go with them; provenance is only meaningful next to
+# the file it describes.
+assets/broll/fetched/
+assets/broll/.search_cache/
+
 # Local Uploads & Raw PDFs
 uploads/*
 !uploads/.gitkeep
