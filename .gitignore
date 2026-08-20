@@ -64,3 +64,10 @@ node_modules/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Raw downloaded stock footage dropped in the tree while sourcing presenters.
+# These are other people's clips under their own licences, and the prepared
+# panel loops in backend/assets/avatars/ are what the compositor actually
+# uses -- keep the originals local rather than redistributing them.
+/*.mp4
+backend/*.mp4
