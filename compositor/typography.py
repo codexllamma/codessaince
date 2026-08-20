@@ -1,16 +1,28 @@
-"""Pillow text shaping, font fallback chain, character budgets (README §5.4, §7.3, Appendix C).
+"""Font resolution, text measurement and drawing (README §5.4, §7.3, Appendix C).
 
 Fonts are always loaded from assets/fonts/ — never resolved from the OS.
+Layout and rasterisation go through compositor/shaping.py (HarfBuzz +
+FreeType) so Indic scripts reorder and ligate correctly; Pillow's own text
+path is only a fallback when those libraries are unavailable.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
+
+# README §5.4 documents running this file directly ("python
+# compositor/typography.py --selftest"), which puts compositor/ on sys.path
+# rather than the repo root. Make the package importable either way.
+if __package__ in (None, ""):  # pragma: no cover - script invocation only
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from compositor import shaping
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +58,39 @@ class MissingFontError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class Font:
+    """A resolved font at a specific size.
+
+    Wraps the file path rather than a Pillow font object, because text is
+    shaped by HarfBuzz and rasterised by FreeType (see compositor/shaping.py)
+    — Pillow's own text path cannot lay out Indic scripts correctly. The
+    Pillow object is kept only for the no-shaping fallback.
+    """
+
+    path: str
+    size: int
+    lang: str
+
+    @property
+    def language_tag(self) -> str:
+        return self.lang
+
+    @property
+    def pillow(self) -> ImageFont.FreeTypeFont:
+        return ImageFont.truetype(self.path, self.size)
+
+
 def _resolve_font_path(lang: str, weight: str) -> Path:
     weights = FONT_FILES.get(lang, FONT_FILES["en"])
     filename = weights.get(weight) or next(iter(weights.values()))
     return FONTS_DIR / filename
 
 
-def load_font(lang: str, weight: str, size_px: int) -> ImageFont.FreeTypeFont:
+def load_font(lang: str, weight: str, size_px: int) -> Font:
     """Load a bundled font. Falls back to English if the requested language's
     font file is missing, so callers never crash mid-render for want of a
-    script we haven't bundled yet — only English is bundled in this slice."""
+    script that has not been bundled yet."""
     key = (lang, weight, size_px)
     if key in _font_cache:
         return _font_cache[key]
@@ -68,7 +103,7 @@ def load_font(lang: str, weight: str, size_px: int) -> ImageFont.FreeTypeFont:
     if not path.exists():
         raise MissingFontError(f"Required font not found: {path}")
 
-    font = ImageFont.truetype(str(path), size_px)
+    font = Font(path=str(path), size=size_px, lang=lang)
     _font_cache[key] = font
     return font
 
@@ -91,20 +126,35 @@ def enforce_budget(text: str, field: str, lang: str) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def measure_text(text: str, font: ImageFont.FreeTypeFont) -> Tuple[int, int]:
-    bbox = font.getbbox(text)
+def measure_text(text: str, font: Font) -> Tuple[int, int]:
+    """Advance width and ink height of `text`.
+
+    Width is the shaped advance, not the ink extent: laying text out by ink
+    width collapses the side bearings and makes words visibly collide. Height
+    stays the ink extent, which is what the vertical centring callers do
+    expects.
+    """
+    if not text:
+        return (0, 0)
+    if shaping.SHAPING_AVAILABLE:
+        width = shaping.advance_width(text, font.path, font.size)
+        top, bottom = shaping.ink_bbox(text, font.path, font.size)[1::2]
+        return (int(round(width)), int(bottom - top))
+    bbox = font.pillow.getbbox(text)
     return (bbox[2] - bbox[0], bbox[3] - bbox[1])
 
 
-def text_pixel_bbox(text: str, font: ImageFont.FreeTypeFont) -> Tuple[int, int, int, int]:
-    """(left, top, right, bottom) offsets of the actual glyph pixels relative
-    to the (x, y) origin passed to draw.text — unlike measure_text, this
-    preserves the top/left offsets, which matter when cropping a tightly
-    fitted region around a specific word (e.g. karaoke active-word scaling)."""
-    return font.getbbox(text)
+def text_pixel_bbox(text: str, font: Font) -> Tuple[int, int, int, int]:
+    """(left, top, right, bottom) of the drawn pixels relative to the (x, y)
+    origin passed to draw_text_layer — unlike measure_text this preserves the
+    top/left offsets, which matter when cropping tightly around one word
+    (karaoke active-word scaling)."""
+    if shaping.SHAPING_AVAILABLE:
+        return shaping.ink_bbox(text, font.path, font.size)
+    return font.pillow.getbbox(text)
 
 
-def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width_px: int, max_lines: int = 2) -> List[str]:
+def wrap_text(text: str, font: Font, max_width_px: int, max_lines: int = 2) -> List[str]:
     """Greedy word-wrap to at most max_lines, ellipsising the last line if it overflows."""
     words = text.split()
     if not words:
@@ -134,9 +184,15 @@ def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width_px: int, max_li
     return lines[:max_lines]
 
 
+def _to_rgb(color: str) -> Tuple[int, int, int]:
+    from PIL import ImageColor
+
+    return ImageColor.getrgb(color)[:3]
+
+
 def draw_text_layer(
     text: str,
-    font: ImageFont.FreeTypeFont,
+    font: Font,
     color: str,
     canvas_size: Tuple[int, int],
     xy: Tuple[int, int],
@@ -145,8 +201,15 @@ def draw_text_layer(
     """Render text onto a transparent RGBA layer the size of the full canvas,
     so it can be alpha-composited directly onto other layers."""
     layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    draw.text(xy, text, font=font, fill=color, align=align)
+    if not text:
+        return layer
+
+    if shaping.SHAPING_AVAILABLE:
+        shaping.draw_shaped_text(
+            layer, text, font.path, font.size, xy, _to_rgb(color), language=font.language_tag
+        )
+    else:
+        ImageDraw.Draw(layer).text(xy, text, font=font.pillow, fill=color, align=align)
     return layer
 
 
@@ -164,9 +227,9 @@ def render_selftest(out_path: str = "assets/fonts/_selftest.png") -> Path:
     }
 
     size_px = 36
-    line_height = size_px + 20
-    canvas = Image.new("RGBA", (1000, line_height * len(samples) + 20), (17, 17, 17, 255))
-    draw = ImageDraw.Draw(canvas)
+    line_height = size_px + 24
+    canvas_size = (1100, line_height * (len(samples) + 1) + 30)
+    canvas = Image.new("RGBA", canvas_size, (17, 17, 17, 255))
 
     # The "[hi]" style label is Latin, so it must be drawn with the Latin face.
     # Drawing it with the language's own font renders tofu for every Indic
@@ -174,16 +237,25 @@ def render_selftest(out_path: str = "assets/fonts/_selftest.png") -> Path:
     label_font = load_font("en", "bold", size_px)
     label_width = measure_text("[xx] ", label_font)[0] + 8
 
+    engine = "HarfBuzz+FreeType" if shaping.SHAPING_AVAILABLE else "Pillow (NO complex shaping)"
+    logger.info("Typography selftest using %s", engine)
+
     y = 10
     for lang, text in samples.items():
         path = _resolve_font_path(lang, "bold")
-        draw.text((10, y), f"[{lang}]", font=label_font, fill="#94A3B8")
+        canvas.alpha_composite(draw_text_layer(f"[{lang}]", label_font, "#94A3B8", canvas_size, (10, y)))
         if path.exists():
             font = load_font(lang, "bold", size_px)
-            draw.text((10 + label_width, y), text, font=font, fill="#F8FAFC")
+            canvas.alpha_composite(draw_text_layer(text, font, "#F8FAFC", canvas_size, (10 + label_width, y)))
         else:
-            draw.text((10 + label_width, y), f"MISSING: {path.name}", font=label_font, fill="#EF4444")
+            canvas.alpha_composite(draw_text_layer(
+                f"MISSING: {path.name}", label_font, "#EF4444", canvas_size, (10 + label_width, y)
+            ))
         y += line_height
+
+    canvas.alpha_composite(draw_text_layer(
+        f"shaping: {engine}", label_font, "#64748B", canvas_size, (10, y)
+    ))
 
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)

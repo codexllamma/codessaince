@@ -27,6 +27,7 @@ VIDEO_FPS = 30
 
 ALERT_PILL_INSET = 96
 ALERT_PILL_HEIGHT = 56
+HEADLINE_GAP_BELOW_PILL = 28
 METRIC_CARD_SIZE = (720, 320)
 
 
@@ -181,7 +182,11 @@ def build_static_layers(
     left_margin = 96
     max_text_width = W - 2 * left_margin
     layer4 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    y = round(H * 0.12)
+    # Start below the alert pill rather than at a fixed fraction of the height.
+    # A proportional 12% put the headline's top at y=130 while the pill runs to
+    # y=152; Latin caps do not reach the top of the em box so the 22px overlap
+    # was invisible, but the Devanagari shirorekha does, and collided.
+    y = ALERT_PILL_INSET + ALERT_PILL_HEIGHT + HEADLINE_GAP_BELOW_PILL
     for line in typography.wrap_text(headline_text, headline_font, max_text_width, max_lines=2):
         layer4.alpha_composite(typography.draw_text_layer(line, headline_font, "#F8FAFC", (W, H), (left_margin, y)))
         y += headline_font.size + 10
