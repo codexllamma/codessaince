@@ -1,0 +1,194 @@
+"""Pillow text shaping, font fallback chain, character budgets (README §5.4, §7.3, Appendix C).
+
+Fonts are always loaded from assets/fonts/ — never resolved from the OS.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
+
+FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
+# language -> weight -> filename (Appendix C). Only "en" is bundled in this slice;
+# the others are declared so the fallback chain has a documented, correct target
+# even before the files exist.
+FONT_FILES: Dict[str, Dict[str, str]] = {
+    "en": {"bold": "NotoSans-Bold.ttf", "regular": "NotoSans-Regular.ttf"},
+    "hi": {"bold": "NotoSansDevanagari-Bold.ttf"},
+    "mr": {"bold": "NotoSansDevanagari-Bold.ttf"},
+    "ta": {"bold": "NotoSansTamil-Bold.ttf"},
+    "te": {"bold": "NotoSansTelugu-Bold.ttf"},
+    "bn": {"bold": "NotoSansBengali-Bold.ttf"},
+}
+
+# (latin_max, indic_max) character budgets, README §7.3.
+CHAR_BUDGETS: Dict[str, Tuple[int, int]] = {
+    "badge_tag": (22, 18),
+    "headline": (58, 46),
+    "subtext": (96, 80),
+    "highlight_metric": (12, 12),
+    "highlight_sublabel": (32, 26),
+}
+
+_LATIN_LANGS = {"en"}
+
+_font_cache: Dict[Tuple[str, str, int], ImageFont.FreeTypeFont] = {}
+
+
+class MissingFontError(Exception):
+    pass
+
+
+def _resolve_font_path(lang: str, weight: str) -> Path:
+    weights = FONT_FILES.get(lang, FONT_FILES["en"])
+    filename = weights.get(weight) or next(iter(weights.values()))
+    return FONTS_DIR / filename
+
+
+def load_font(lang: str, weight: str, size_px: int) -> ImageFont.FreeTypeFont:
+    """Load a bundled font. Falls back to English if the requested language's
+    font file is missing, so callers never crash mid-render for want of a
+    script we haven't bundled yet — only English is bundled in this slice."""
+    key = (lang, weight, size_px)
+    if key in _font_cache:
+        return _font_cache[key]
+
+    path = _resolve_font_path(lang, weight)
+    if not path.exists() and lang != "en":
+        logger.warning("Font missing for lang=%s weight=%s (%s); falling back to English", lang, weight, path.name)
+        path = _resolve_font_path("en", weight)
+
+    if not path.exists():
+        raise MissingFontError(f"Required font not found: {path}")
+
+    font = ImageFont.truetype(str(path), size_px)
+    _font_cache[key] = font
+    return font
+
+
+def is_indic(lang: str) -> bool:
+    return lang not in _LATIN_LANGS
+
+
+def char_budget(field: str, lang: str) -> int:
+    latin_max, indic_max = CHAR_BUDGETS[field]
+    return latin_max if not is_indic(lang) else indic_max
+
+
+def enforce_budget(text: str, field: str, lang: str) -> str:
+    limit = char_budget(field, lang)
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return text[:limit]
+    return text[: limit - 1].rstrip() + "…"
+
+
+def measure_text(text: str, font: ImageFont.FreeTypeFont) -> Tuple[int, int]:
+    bbox = font.getbbox(text)
+    return (bbox[2] - bbox[0], bbox[3] - bbox[1])
+
+
+def text_pixel_bbox(text: str, font: ImageFont.FreeTypeFont) -> Tuple[int, int, int, int]:
+    """(left, top, right, bottom) offsets of the actual glyph pixels relative
+    to the (x, y) origin passed to draw.text — unlike measure_text, this
+    preserves the top/left offsets, which matter when cropping a tightly
+    fitted region around a specific word (e.g. karaoke active-word scaling)."""
+    return font.getbbox(text)
+
+
+def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width_px: int, max_lines: int = 2) -> List[str]:
+    """Greedy word-wrap to at most max_lines, ellipsising the last line if it overflows."""
+    words = text.split()
+    if not words:
+        return [""]
+
+    lines: List[str] = []
+    current: List[str] = []
+    for word in words:
+        candidate = " ".join(current + [word])
+        if measure_text(candidate, font)[0] <= max_width_px or not current:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+        if len(lines) == max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(" ".join(current))
+
+    remaining_words = words[sum(len(l.split()) for l in lines):]
+    if remaining_words and lines:
+        last = lines[-1]
+        while measure_text(last + "…", font)[0] > max_width_px and " " in last:
+            last = last.rsplit(" ", 1)[0]
+        lines[-1] = last.rstrip() + "…"
+
+    return lines[:max_lines]
+
+
+def draw_text_layer(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    color: str,
+    canvas_size: Tuple[int, int],
+    xy: Tuple[int, int],
+    align: str = "left",
+) -> Image.Image:
+    """Render text onto a transparent RGBA layer the size of the full canvas,
+    so it can be alpha-composited directly onto other layers."""
+    layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    draw.text(xy, text, font=font, fill=color, align=align)
+    return layer
+
+
+def render_selftest(out_path: str = "assets/fonts/_selftest.png") -> Path:
+    """One sample line per language. Missing font files render a visible
+    placeholder line instead of crashing, so this stays runnable with only
+    English bundled (README §5.4)."""
+    samples = {
+        "en": "The quick brown fox — PM-KISAN ₹2,000",
+        "hi": "यह एक परीक्षण वाक्य है — पीएम-किसान",
+        "ta": "இது ஒரு சோதனை வாக்கியம்",
+        "te": "ఇది ఒక పరీక్ష వాక్యం",
+        "bn": "এটি একটি পরীক্ষামূলক বাক্য",
+        "mr": "हे एक चाचणी वाक्य आहे",
+    }
+
+    size_px = 36
+    line_height = size_px + 20
+    canvas = Image.new("RGBA", (1000, line_height * len(samples) + 20), (17, 17, 17, 255))
+    draw = ImageDraw.Draw(canvas)
+
+    y = 10
+    for lang, text in samples.items():
+        path = _resolve_font_path(lang, "bold")
+        if path.exists():
+            font = load_font(lang, "bold", size_px)
+            draw.text((10, y), f"[{lang}] {text}", font=font, fill="#F8FAFC")
+        else:
+            fallback = load_font("en", "regular", size_px)
+            draw.text((10, y), f"[{lang}] MISSING: {path.name}", font=fallback, fill="#EF4444")
+        y += line_height
+
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    canvas.convert("RGB").save(out)
+    logger.info("Wrote typography selftest to %s", out)
+    return out
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    if "--selftest" in sys.argv:
+        render_selftest()
+    else:
+        print("Usage: python compositor/typography.py --selftest")

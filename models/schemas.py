@@ -103,6 +103,10 @@ class VisualAssetSelection(BaseModel):
   asset_id: str
   asset_type: Literal["video_loop", "static_graphic", "mesh_gradient"]
   file_path: str
+  # Carried on every manifest entry (section 10.1) and consumed by the
+  # compositor for the metric-card glow, alert pill, and the tint of the
+  # procedural mesh_gradient fallback. Default is accent.finance.
+  accent_color: str = Field(default="#38BDF8", pattern=r"^#[0-9A-Fa-f]{6}$")
   dim_overlay_opacity: float = Field(default=0.65, ge=0.0, le=1.0)
 
 
