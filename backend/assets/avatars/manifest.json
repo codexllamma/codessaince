@@ -37,15 +37,15 @@
   },
   "avatars": [
     {
-      "avatar_id": "anchor_m01",
-      "file": "anchor_m01.mp4",
+      "avatar_id": "anchor_male",
+      "file": "anchor_male.mp4",
       "languages": [
         "en",
         "*"
       ],
-      "display_name": "Anchor M01",
+      "display_name": "Anchor Male",
       "source": "synthetic",
-      "licence": "AI-generated news anchor (KingAI 3.0 watermark visible bottom-right); no real person depicted. Provenance supplied by teammate in commit 1770f99 - confirm generator terms before any non-demo use.",
+      "licence": "AI-generated news anchor (KingAI 3.0 watermark in source, removed by the panel centre-crop); no real person depicted. Supplied by teammate as male_raw.mp4.",
       "disclosure_label": "AI-GENERATED PRESENTER - NOT A GOVERNMENT OFFICIAL"
     },
     {

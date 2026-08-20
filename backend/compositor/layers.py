@@ -606,6 +606,7 @@ def make_frame_function(
     presenter_source=None,
     presenter_layout=None,
     presenter_track=None,
+    presenter_offset_sec: float = 0.0,
     lang: str = "en",
 ) -> Callable[[float], np.ndarray]:
     """Kinetic, audio-synchronized frame compositor with animated entrances and progress bar."""
@@ -665,9 +666,17 @@ def make_frame_function(
         if frame.mode != "RGB":
             frame = frame.convert("RGB")
 
-        # 2. Split-screen Presenter if enabled
+        # 2. Split-screen Presenter if enabled.
+        #
+        # presenter_offset_sec places this scene inside one continuous
+        # narration: the anchor is lip-synced once against the whole script, so
+        # scene 2 must resume where scene 1 stopped rather than replay the clip
+        # from zero. It stays 0.0 in the per-scene mode, where each scene owns
+        # its own audio and its own presenter clip.
         if presenter_source is not None and presenter_box is not None:
-            presenter_source.paste_onto(frame, presenter_box, t, presenter_track)
+            presenter_source.paste_onto(
+                frame, presenter_box, presenter_offset_sec + t, presenter_track
+            )
 
         # 3. Top Scene Progress Bar (Animated timeline)
         draw = ImageDraw.Draw(frame)
@@ -821,7 +830,16 @@ def resolve_presenter(
     return source, layout
 
 
-def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT), presenter_source=None, presenter_layout=None):
+def render_scene_clip(
+    scene: SceneDefinition,
+    lang: str,
+    scene_index: int,
+    canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT),
+    presenter_source=None,
+    presenter_layout=None,
+    presenter_offset_sec: float = 0.0,
+    attach_audio: bool = True,
+):
     from moviepy import AudioFileClip, VideoClip
 
     if scene.scene_duration_sec is None or scene.subtitles is None:
@@ -838,8 +856,16 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
     # scene against the same decoded frames, so it costs no extra decoding.
     # Keyed off p_source, not the presenter_source parameter: render_job now
     # passes None deliberately so each scene resolves its own lip-synced clip.
+    #
+    # Skipped entirely in continuous-narration mode: the presenter is already
+    # lip-synced against the whole script, and re-cutting it to gesture windows
+    # would slice the mouth out of sync with the audio it was generated from.
     presenter_track = None
-    if p_source is not None and getattr(p_source, "clip_path", None) is not None:
+    if (
+        presenter_offset_sec == 0.0
+        and p_source is not None
+        and getattr(p_source, "clip_path", None) is not None
+    ):
         presenter_track = gestures.build_track(
             scene.subtitles, scene.template_type,
             scene.scene_duration_sec, p_source.clip_path,
@@ -857,11 +883,18 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
     frame_fn = make_frame_function(
         scene, static_layers, caption_cache, bg_source, pan_targets, canvas_size,
         presenter_source=p_source, presenter_layout=presenter_layout,
-        presenter_track=presenter_track, lang=lang,
+        presenter_track=presenter_track, presenter_offset_sec=presenter_offset_sec,
+        lang=lang,
     )
     clip = VideoClip(frame_function=frame_fn, duration=scene.scene_duration_sec).with_fps(VIDEO_FPS)
     if bg_video is not None:
         clip._broll_background = bg_video
+
+    # In continuous-narration mode the caller owns the audio: one stream is
+    # attached to the concatenated video instead, so that a sentence running
+    # across a scene boundary is not cut and restarted.
+    if not attach_audio:
+        return clip
 
     audio_file = resolve_audio_path(scene.audio_path)
     if audio_file is not None:
@@ -905,25 +938,61 @@ def _write_with_fallback(clip, out_path: str, codec_pref: str) -> None:
     )
 
 
-def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc", canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT)) -> str:
+def render_job(
+    scenes,
+    lang: str,
+    out_path: str,
+    codec_pref: str = "h264_nvenc",
+    canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT),
+    presenter_source=None,
+    narration_wav: Optional[str] = None,
+) -> str:
+    """Render `scenes` to `out_path`.
+
+    Two presenter modes:
+
+    - Per-scene (the default): each scene resolves and lip-syncs its own clip
+      from its own audio file.
+    - Continuous: the caller passes a `presenter_source` already lip-synced
+      against the whole script plus the `narration_wav` it was made from. Each
+      scene then samples that one stream at its own offset and carries no audio
+      of its own, so the anchor speaks through the scene cuts instead of
+      restarting at each one. Only the visuals behind change.
+    """
     import time
     _ffmpeg.ensure_ffmpeg_binary_env()
-    from moviepy import concatenate_videoclips
+    from moviepy import AudioFileClip, concatenate_videoclips
 
     t0 = time.time()
     total_dur = sum(s.scene_duration_sec or 0.0 for s in scenes)
+    continuous = presenter_source is not None
     print(f"\n=======================================================", flush=True)
     print(f"[RENDER JOB START] Language: {lang.upper()} | Scenes: {len(scenes)} | Total Duration: {total_dur:.1f}s", flush=True)
+    print(f"[RENDER JOB MODE] {'continuous narration' if continuous else 'per-scene audio'}", flush=True)
     print(f"[RENDER JOB TARGET] Output Path: {out_path}", flush=True)
     print(f"=======================================================", flush=True)
 
-    _, presenter_layout = resolve_presenter(lang, canvas_size)
+    _, presenter_layout = resolve_presenter(lang, canvas_size, use_wav2lip=not continuous)
 
-    clips = [
-        render_scene_clip(s, lang, i, canvas_size, presenter_source=None, presenter_layout=presenter_layout)
-        for i, s in enumerate(scenes)
-    ]
+    clips = []
+    offset = 0.0
+    for i, s in enumerate(scenes):
+        clips.append(render_scene_clip(
+            s, lang, i, canvas_size,
+            presenter_source=presenter_source,
+            presenter_layout=presenter_layout,
+            presenter_offset_sec=offset if continuous else 0.0,
+            attach_audio=not continuous,
+        ))
+        if continuous:
+            print(f"[SCENE {s.scene_id}] presenter offset {offset:.2f}s -> {offset + (s.scene_duration_sec or 0.0):.2f}s", flush=True)
+        offset += s.scene_duration_sec or 0.0
+
     final = concatenate_videoclips(clips, method="chain")
+    if continuous and narration_wav:
+        narration = AudioFileClip(str(narration_wav))
+        print(f"[AUDIO] attaching continuous narration: {Path(narration_wav).name} ({narration.duration:.2f}s)", flush=True)
+        final = final.with_audio(narration)
     try:
         _write_with_fallback(final, out_path, codec_pref)
         elapsed = time.time() - t0
