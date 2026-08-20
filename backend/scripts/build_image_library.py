@@ -99,6 +99,19 @@ SOURCE_CATEGORIES: Dict[str, List[str]] = {
     ],
 }
 
+# Baseline keyword tags per fact category, used to seed each sidecar's "tags"
+# list so a downstream selector can score images by keyword relevance against
+# scene text rather than only bucketing by category folder.
+CATEGORY_BASE_TAGS: Dict[str, List[str]] = {
+    "SCHEME_NAME": ["scheme", "yojana", "agriculture", "farmer", "farmers", "crop", "wheat", "rural", "kisan"],
+    "AMOUNT": ["amount", "rupee", "rupees", "money", "payment", "currency", "bank", "cash", "rs", "inr"],
+    "DEADLINE": ["deadline", "date", "clock", "calendar", "cutoff", "last", "before", "time"],
+    "ELIGIBILITY": ["eligibility", "village", "rural", "household", "family", "villages"],
+    "BENEFICIARY": ["beneficiary", "beneficiaries", "farmer", "farmers", "people", "worker", "workers"],
+    "AUTHORITY": ["ministry", "government", "authority", "official", "secretariat", "building", "govt"],
+    "ACTION_REQUIRED": ["verification", "kyc", "update", "action", "portal", "digital", "payment", "app", "helpdesk"],
+}
+
 # Titles containing these are almost never the photograph the category name
 # suggests — logos, flags, diagrams, coats of arms, scanned documents.
 TITLE_EXCLUDE = re.compile(
@@ -208,6 +221,32 @@ def _slug(text: str) -> str:
   return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:56] or "image"
 
 
+_TITLE_TAG_STOPWORDS = {
+    "the", "and", "of", "in", "for", "with", "from", "file", "jpg", "jpeg",
+    "png", "photo", "image", "picture",
+}
+
+
+def extract_title_tags(title: str) -> list[str]:
+  """Keyword tags derived from a Commons file title, e.g.
+  "File:Farmer_in_wheat_field.jpg" -> ["farmer", "wheat", "field"].
+  """
+  stem = title
+  if stem.lower().startswith("file:"):
+    stem = stem[len("file:"):]
+  stem = Path(stem).stem
+  tokens = re.split(r"[^a-z0-9]+", stem.lower())
+
+  tags: list[str] = []
+  seen = set()
+  for tok in tokens:
+    if len(tok) <= 2 or tok in _TITLE_TAG_STOPWORDS or tok in seen:
+      continue
+    seen.add(tok)
+    tags.append(tok)
+  return tags
+
+
 def _download_body(url: str, attempts: int = 4) -> Optional[bytes]:
   """GET the raw bytes with retry/backoff. upload.wikimedia.org is a
   separate endpoint from the API and rate-limits independently — a burst of
@@ -260,6 +299,8 @@ def download_candidate(c: Candidate, category: str, out_dir: Path) -> Optional[P
     print(f"    ! {safe_title}: {exc}")
     return None
 
+  tags = list(dict.fromkeys(CATEGORY_BASE_TAGS.get(category, []) + extract_title_tags(c.title)))
+
   out_path.with_suffix(".source.json").write_text(
       json.dumps({
           "category": category,
@@ -270,6 +311,7 @@ def download_candidate(c: Candidate, category: str, out_dir: Path) -> Optional[P
           "artist": c.artist,
           "width": c.width,
           "height": c.height,
+          "tags": tags,
       }, indent=2, ensure_ascii=False),
       encoding="utf-8",
   )
@@ -343,11 +385,41 @@ def contact_sheet(results: Dict[str, List[Path]], out_path: Path) -> None:
   print("image + its .source.json sidecar for anything that fails that check.")
 
 
+def retag_library() -> int:
+  """Recompute the "tags" field of every existing .source.json sidecar under
+  LIBRARY_DIR from its own recorded category/commons_title, without touching
+  the network or any other key in the sidecar."""
+  count = 0
+  for sidecar in sorted(LIBRARY_DIR.rglob("*.source.json")):
+    try:
+      data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except Exception as exc:
+      print(f"    ! {sidecar}: {exc}")
+      continue
+
+    category = data.get("category", "")
+    title = data.get("commons_title", "")
+    tags = list(dict.fromkeys(CATEGORY_BASE_TAGS.get(category, []) + extract_title_tags(title)))
+    data["tags"] = tags
+
+    sidecar.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    count += 1
+    rel = sidecar.relative_to(LIBRARY_DIR)
+    print(f"retagged: {rel.as_posix()} -> {tags}")
+
+  print(f"=== retagged {count} sidecar(s) under {LIBRARY_DIR} ===")
+  return 0
+
+
 def main() -> int:
   p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   p.add_argument("--per-category", type=int, default=DEFAULT_PER_CATEGORY)
   p.add_argument("--contact-sheet-only", action="store_true", help="skip fetching, just re-render the sheet")
+  p.add_argument("--retag", action="store_true", help="recompute tags in existing .source.json sidecars, offline, no fetching")
   args = p.parse_args()
+
+  if args.retag:
+    return retag_library()
 
   if args.contact_sheet_only:
     results = {

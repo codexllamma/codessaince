@@ -39,6 +39,7 @@ class LibraryImage:
   licence: str
   artist: str
   source_page: str
+  tags: Tuple[str, ...] = ()
 
 
 @lru_cache(maxsize=1)
@@ -74,6 +75,7 @@ def _load_index() -> Tuple[LibraryImage, ...]:
           licence=meta.get("licence", ""),
           artist=meta.get("artist", ""),
           source_page=meta.get("source_page", ""),
+          tags=tuple(str(t) for t in meta.get("tags", []) if isinstance(t, str)),
       ))
   logger.info("image library: %d images loaded from %s", len(images), LIBRARY_DIR)
   return tuple(images)
@@ -89,18 +91,40 @@ def available_categories() -> Tuple[str, ...]:
   return tuple(sorted({img.category for img in _load_index()}))
 
 
-def select_image(category: str, seed: str = "") -> Optional[LibraryImage]:
+def select_image(category: str, scene_text: str = "", seed: str = "") -> Optional[LibraryImage]:
   """The image for `category`, or None if that category has nothing.
 
-  Selection is a stable hash of (category, seed) rather than random, so the
-  same scene gets the same image across repeated renders — a demo should not
-  visibly reshuffle its own backgrounds between takes. Pass a per-job or
-  per-scene seed (e.g. the scene_id) to vary the pick across scenes that
-  share a category.
+  `scene_text` is the scene's actual fact text (or however much of it the
+  caller has), used to steer which of several images in a category gets
+  used: a scene mentioning "verification" should prefer an image tagged
+  "verification" over a generically-tagged one in the same category, rather
+  than an arbitrary pick that ignores what the scene is actually about.
+  Scoring mirrors match_visual_asset in asset_matcher.py — +2 per tag that
+  appears as a substring of the lowercased scene text — so the two stay
+  consistent if either is tuned later.
+
+  Ties (including the "no scene_text" and "nothing matched" cases, which are
+  a tie across the full candidate pool at score 0) are broken by a stable
+  hash of (category, seed) rather than randomly, so the same scene gets the
+  same image across repeated renders — a demo should not visibly reshuffle
+  its own backgrounds between takes. Pass a per-job or per-scene seed (e.g.
+  the scene_id) to vary the pick across scenes that share a category.
   """
   candidates = [img for img in _load_index() if img.category == category]
   if not candidates:
     return None
+
+  pool = candidates
+  if scene_text:
+    search_corpus = scene_text.lower()
+    scores = [
+        sum(2 for tag in img.tags if tag in search_corpus)
+        for img in candidates
+    ]
+    best_score = max(scores)
+    if best_score > 0:
+      pool = [img for img, score in zip(candidates, scores) if score == best_score]
+
   digest = hashlib.sha256(f"{category}|{seed}".encode("utf-8")).digest()
-  index = int.from_bytes(digest[:4], "big") % len(candidates)
-  return candidates[index]
+  index = int.from_bytes(digest[:4], "big") % len(pool)
+  return pool[index]

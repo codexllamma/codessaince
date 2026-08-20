@@ -12,18 +12,21 @@ import pytest
 from services import image_library as lib
 
 
-def _seed(tmp_path, category, name, licence="CC0", artist="Test Artist"):
+def _seed(tmp_path, category, name, licence="CC0", artist="Test Artist", tags=None):
   cat_dir = tmp_path / category
   cat_dir.mkdir(parents=True, exist_ok=True)
   (cat_dir / f"{name}.jpg").write_bytes(b"\xff\xd8\xff\xe0fake-jpeg-bytes")
+  meta = {
+      "category": category,
+      "commons_title": f"File:{name}.jpg",
+      "licence": licence,
+      "artist": artist,
+      "source_page": f"https://commons.wikimedia.org/wiki/File:{name}.jpg",
+  }
+  if tags is not None:
+    meta["tags"] = tags
   (cat_dir / f"{name}.source.json").write_text(
-      json.dumps({
-          "category": category,
-          "commons_title": f"File:{name}.jpg",
-          "licence": licence,
-          "artist": artist,
-          "source_page": f"https://commons.wikimedia.org/wiki/File:{name}.jpg",
-      }),
+      json.dumps(meta),
       encoding="utf-8",
   )
   return cat_dir / f"{name}.jpg"
@@ -110,3 +113,55 @@ def test_available_categories_reflects_what_was_seeded(isolated_library):
   _seed(isolated_library, "AMOUNT", "a")
   _seed(isolated_library, "DEADLINE", "d")
   assert lib.available_categories() == ("AMOUNT", "DEADLINE")
+
+
+def test_tag_overlap_is_preferred_over_no_overlap(isolated_library):
+  _seed(isolated_library, "AUTHORITY", "matching", tags=["verification"])
+  _seed(isolated_library, "AUTHORITY", "unrelated", tags=["building", "office"])
+  picked = lib.select_image("AUTHORITY", scene_text="pending verification of your account")
+  assert picked is not None
+  assert picked.path.name == "matching.jpg"
+
+
+def test_tied_tag_scores_pick_deterministically(isolated_library):
+  for i in range(6):
+    _seed(isolated_library, "AUTHORITY", f"office_{i}", tags=["verification"])
+  lib.reload_index()
+  first = lib.select_image("AUTHORITY", scene_text="verification required", seed="scene-1")
+  second = lib.select_image("AUTHORITY", scene_text="verification required", seed="scene-1")
+  assert first.path == second.path
+
+  picks = {
+      lib.select_image("AUTHORITY", scene_text="verification required", seed=f"scene-{i}").path
+      for i in range(20)
+  }
+  assert len(picks) > 1, "hash should break ties among equally-scored candidates, not just pick the first"
+
+
+def test_scene_text_matching_nothing_falls_back_to_full_pool_hash(isolated_library):
+  for i in range(5):
+    _seed(isolated_library, "AMOUNT", f"rupees_{i}", tags=["currency", "cash"])
+  lib.reload_index()
+  with_unmatched_text = lib.select_image("AMOUNT", scene_text="completely unrelated wording", seed="scene-7")
+  without_scene_text = lib.select_image("AMOUNT", seed="scene-7")
+  assert with_unmatched_text.path == without_scene_text.path
+
+
+def test_empty_scene_text_matches_pre_feature_behavior(isolated_library):
+  for i in range(5):
+    _seed(isolated_library, "AMOUNT", f"rupees_{i}", tags=["currency"])
+  lib.reload_index()
+  with_empty_text = lib.select_image("AMOUNT", scene_text="", seed="scene-9")
+  omitted_text = lib.select_image("AMOUNT", seed="scene-9")
+  assert with_empty_text.path == omitted_text.path
+
+
+def test_sidecar_without_tags_key_loads_with_empty_tags_and_is_a_valid_pick(isolated_library):
+  _seed(isolated_library, "DEADLINE", "clock_1")  # no tags kwarg: no "tags" key in sidecar at all
+  picked_no_scene_text = lib.select_image("DEADLINE")
+  assert picked_no_scene_text is not None
+  assert picked_no_scene_text.tags == ()
+
+  picked_with_scene_text = lib.select_image("DEADLINE", scene_text="the deadline is approaching fast")
+  assert picked_with_scene_text is not None
+  assert picked_with_scene_text.path.name == "clock_1.jpg"

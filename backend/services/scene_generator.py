@@ -56,7 +56,10 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
               headline=scheme_name,
               subtext=auth_name,
           ),
-          asset=match_visual_asset(TemplateType.HERO_ANNOUNCEMENT, s1_spoken),
+          asset=match_visual_asset(
+              TemplateType.HERO_ANNOUNCEMENT, s1_spoken,
+              [c for c, present in ((FactCategory.SCHEME_NAME, scheme), (FactCategory.AUTHORITY, authority)) if present],
+          ),
       )
   )
   scene_idx += 1
@@ -100,7 +103,7 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
                 highlight_metric=amt_val,
                 highlight_sublabel="Per Beneficiary",
             ),
-            asset=match_visual_asset(TemplateType.METRIC_FOCUS, s2_spoken),
+            asset=match_visual_asset(TemplateType.METRIC_FOCUS, s2_spoken, [FactCategory.AMOUNT]),
         )
     )
     scene_idx += 1
@@ -161,7 +164,10 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
                 highlight_metric=dl_val,
                 highlight_sublabel="Cutoff Date",
             ),
-            asset=match_visual_asset(TemplateType.DEADLINE_ALERT, s3_spoken),
+            asset=match_visual_asset(
+                TemplateType.DEADLINE_ALERT, s3_spoken,
+                [c for c, present in ((FactCategory.DEADLINE, deadline), (FactCategory.ACTION_REQUIRED, action)) if present],
+            ),
         )
     )
     scene_idx += 1
@@ -189,7 +195,10 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
               subtext="pmkisan.gov.in",
               highlight_sublabel="National Helpdesk: 155261",
           ),
-          asset=match_visual_asset(TemplateType.OUTRO_CALL_TO_ACTION, s4_spoken),
+          asset=match_visual_asset(
+              TemplateType.OUTRO_CALL_TO_ACTION, s4_spoken,
+              [c for c, present in ((FactCategory.ACTION_REQUIRED, action), (FactCategory.AUTHORITY, authority)) if present],
+          ),
       )
   )
 

@@ -114,23 +114,33 @@ def _prefer_library_image(
     if (Path(__file__).resolve().parent.parent / selection.file_path).is_file():
       return selection  # the curated clip really is there; use it
 
-  category = categories[0].value if categories else _CATEGORY_FOR_TEMPLATE.get(template_type, "")
+  # `categories` is an ordered preference — scene_generator passes it as
+  # priority-ordered by how central that fact is to the scene, real facts
+  # only (a fallback display string like "Ministry of Agriculture" for a
+  # scene with no AUTHORITY fact does not get to steer image selection).
+  # The template default is appended last so a scene with no categories at
+  # all — or one whose facts have empty pools — still gets a reasonable try
+  # before giving up to the gradient.
+  ordered = [c.value for c in categories] if categories else []
+  template_default = _CATEGORY_FOR_TEMPLATE.get(template_type, "")
+  if template_default and template_default not in ordered:
+    ordered.append(template_default)
 
   try:
-    image = image_library.select_image(category, seed=scene_text)
+    for category in ordered:
+      image = image_library.select_image(category, scene_text=scene_text, seed=scene_text)
+      if image is not None:
+        return VisualAssetSelection(
+            asset_id=f"library_{image.path.stem}",
+            asset_type="static_graphic",
+            file_path=str(image.path.relative_to(Path(__file__).resolve().parent.parent)).replace("\\", "/"),
+            accent_color=selection.accent_color,
+            dim_overlay_opacity=0.65,
+        )
   except Exception:  # never let asset selection break scene generation
     return selection
 
-  if image is None:
-    return selection
-
-  return VisualAssetSelection(
-      asset_id=f"library_{image.path.stem}",
-      asset_type="static_graphic",
-      file_path=str(image.path.relative_to(Path(__file__).resolve().parent.parent)).replace("\\", "/"),
-      accent_color=selection.accent_color,
-      dim_overlay_opacity=0.65,
-  )
+  return selection
 
 
 # Used when a scene carries no facts of its own to key off.
