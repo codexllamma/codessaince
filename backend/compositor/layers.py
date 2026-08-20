@@ -749,6 +749,29 @@ def resolve_audio_path(audio_path: Optional[str]) -> Optional[Path]:
     return None
 
 
+# Face Wav2Lip animates, most-preferred first. Resolved against the backend
+# directory rather than the process CWD, which is only "backend/" when the
+# server happens to have been started from there.
+#
+# anchor_source.png is deliberately NOT in this list: it carries visible "DD
+# INDIA" branding, and animating an apparent broadcaster of a real public
+# network to read government notices is the impersonation case the avatar
+# manifest rules out. These are generated faces belonging to no real person.
+LIPSYNC_FACE_CANDIDATES = (
+    "indian_man.png",
+    "anchor_m01_face.png",
+)
+
+
+def _lipsync_face_image() -> Optional[Path]:
+    avatars = Path(__file__).resolve().parent.parent / "assets" / "avatars"
+    for name in LIPSYNC_FACE_CANDIDATES:
+        candidate = avatars / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def resolve_presenter(
     lang: str,
     canvas_size: Tuple[int, int],
@@ -765,8 +788,8 @@ def resolve_presenter(
     # 1. Dynamic Wav2Lip-HD Lip-Sync Synthesis
     if use_wav2lip and scene is not None and scene.audio_path:
         audio_file = resolve_audio_path(scene.audio_path)
-        anchor_img = Path("assets/avatars/anchor_source.png")
-        if audio_file is not None and anchor_img.is_file():
+        anchor_img = _lipsync_face_image()
+        if audio_file is not None and anchor_img is not None:
             try:
                 from services.wav2lip_service import generate_lip_sync
 
@@ -779,7 +802,7 @@ def resolve_presenter(
                         face_image_path=anchor_img,
                         audio_path=audio_file,
                         output_path=lip_sync_mp4,
-                        batch_size=32,
+                        batch_size=16,
                         enhance_face=True,
                     )
 
