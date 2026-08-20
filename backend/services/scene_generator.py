@@ -18,6 +18,7 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
   deadline = fact_map.get(FactCategory.DEADLINE)
   authority = fact_map.get(FactCategory.AUTHORITY)
   action = fact_map.get(FactCategory.ACTION_REQUIRED)
+  eligibility = fact_map.get(FactCategory.ELIGIBILITY)
 
   scenes: List[SceneDefinition] = []
   scene_idx = 1
@@ -103,7 +104,10 @@ def build_scenes_from_facts(facts: List[ExtractedFact]) -> List[SceneDefinition]
                 highlight_metric=amt_val,
                 highlight_sublabel="Per Beneficiary",
             ),
-            asset=match_visual_asset(TemplateType.METRIC_FOCUS, s2_spoken, [FactCategory.AMOUNT]),
+            asset=match_visual_asset(
+                TemplateType.METRIC_FOCUS, s2_spoken,
+                [c for c, present in ((FactCategory.AMOUNT, amount), (FactCategory.ELIGIBILITY, eligibility)) if present],
+            ),
         )
     )
     scene_idx += 1

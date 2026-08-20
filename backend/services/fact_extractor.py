@@ -210,7 +210,37 @@ def extract_facts_from_text(raw_text: str) -> List[ExtractedFact]:
                 fact_id_counter += 1
                 break
 
-    # 6. Fallback if fewer than 2 facts extracted (ensure grounded baseline)
+    # 6. Extract ELIGIBILITY (target-audience criteria — who qualifies, not
+    # who benefits once qualified; BENEFICIARY is the module's stated
+    # counterpart to this but has no extraction rule yet)
+    eligibility_patterns = [
+        r"\b((?:small\s+and\s+marginal|small|marginal)\s+farmers)\b",
+        r"\b(eligible\s+(?:farmers|beneficiaries|households|citizens|families|farmer\s+families))\b",
+        r"\b(rural\s+households)\b",
+        r"\b(landholding\s+farmer\s+families)\b",
+        r"\b(farmers?\s+(?:owning|holding)\s+(?:less\s+than|up\s+to)\s+[\d.]+\s*(?:hectares?|acres?)(?:\s+of\s+land)?)\b",
+    ]
+    for pattern in eligibility_patterns:
+        match = re.search(pattern, raw_text, re.IGNORECASE)
+        if match:
+            raw_val = match.group(1).strip()
+            facts.append(
+                ExtractedFact(
+                    fact_id=f"f{fact_id_counter}",
+                    category=FactCategory.ELIGIBILITY,
+                    raw_value=raw_val,
+                    normalized_value=raw_val.title(),
+                    source_page=1,
+                    source_char_start=match.start(1),
+                    source_char_end=match.end(1),
+                    confidence_score=0.93,
+                    is_verified=True,
+                )
+            )
+            fact_id_counter += 1
+            break
+
+    # 7. Fallback if fewer than 2 facts extracted (ensure grounded baseline)
     if len(facts) < 2:
         # Generic sentence scan fallback
         sentences = [s.strip() for s in re.split(r"[.\n]", raw_text) if s.strip()]

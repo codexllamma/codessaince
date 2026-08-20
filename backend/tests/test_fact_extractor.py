@@ -64,3 +64,39 @@ def test_extract_char_provenance_offsets():
         assert fact.source_char_start >= 0
         assert fact.source_char_end > fact.source_char_start
         assert text[fact.source_char_start:fact.source_char_end] == fact.raw_value
+
+
+def test_extract_eligibility_small_and_marginal_farmers():
+    text = (
+        "Ministry of Agriculture: PM-KISAN 17th installment of Rs 2000 for "
+        "small and marginal farmers. Complete verification before 31-10-2026."
+    )
+    facts = extract_facts_from_text(text)
+    categories = {f.category: f for f in facts}
+    assert FactCategory.ELIGIBILITY in categories
+    assert categories[FactCategory.ELIGIBILITY].raw_value == "small and marginal farmers"
+
+
+def test_extract_eligibility_eligible_households():
+    text = "Department of Rural Development: eligible households will receive Rs 500 monthly."
+    facts = extract_facts_from_text(text)
+    categories = {f.category: f for f in facts}
+    assert FactCategory.ELIGIBILITY in categories
+    assert categories[FactCategory.ELIGIBILITY].raw_value == "eligible households"
+
+
+def test_extract_eligibility_landholding_threshold():
+    text = "Ministry of Agriculture: farmers owning less than 2 hectares of land are eligible for Rs 6000."
+    facts = extract_facts_from_text(text)
+    categories = {f.category: f for f in facts}
+    assert FactCategory.ELIGIBILITY in categories
+    assert "hectares" in categories[FactCategory.ELIGIBILITY].raw_value.lower()
+
+
+def test_no_eligibility_phrase_extracts_nothing_for_that_category():
+    """A notice with no eligibility criteria genuinely has none — the
+    category should stay absent, not get invented."""
+    text = "Ministry of Agriculture: PM-KISAN 17th installment of Rs 2000. Complete verification before 31-10-2026."
+    facts = extract_facts_from_text(text)
+    categories = {f.category for f in facts}
+    assert FactCategory.ELIGIBILITY not in categories
