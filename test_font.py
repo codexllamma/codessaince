@@ -1,7 +1,15 @@
-from pathlib import Path
-import numpy as np
-from PIL import Image
+"""Visual font check: render one card per language and eyeball it for tofu.
 
+Renders through the real compositor layer stack (compositor/layers.py), which
+is what actually produces frames, so what you inspect here is what ships.
+Fonts resolve via compositor/typography.py FONT_FILES against assets/fonts/.
+
+Usage:  python test_font.py    ->  static/font_tests/test_card_<lang>.png
+"""
+
+from pathlib import Path
+
+from compositor import layers
 from models.schemas import (
     SceneDefinition,
     ScriptSegment,
@@ -9,7 +17,6 @@ from models.schemas import (
     VisualAssetSelection,
     VisualTextHierarchy,
 )
-from services.video_renderer import render_scene_card_image
 
 out_dir = Path("static/font_tests")
 out_dir.mkdir(parents=True, exist_ok=True)
@@ -59,9 +66,26 @@ test_cases = {
             " చేయబడతాయి."
         ),
     },
+    "mr": {
+        "badge": "अधिकृत सूचना",
+        "headline": "पीएम-किसान १७वा हप्ता जाहीर",
+        "subtext": "कृषी व शेतकरी कल्याण मंत्रालय",
+        "metric": "₹2,000",
+        "metric_sub": "थेट लाभ हस्तांतरण",
+        "spoken": "कृषी मंत्रालयाची अधिकृत अधिसूचना: पात्र शेतकऱ्यांना ₹2,000 मिळतील.",
+    },
+    "bn": {
+        "badge": "সরকারি বিজ্ঞপ্তি",
+        "headline": "পিএম-কিসান ১৭তম কিস্তি",
+        "subtext": "কৃষি ও কৃষক কল্যাণ মন্ত্রক",
+        "metric": "₹2,000",
+        "metric_sub": "সরাসরি সুবিধা স্থানান্তর",
+        "spoken": "কৃষি মন্ত্রকের সরকারি বিজ্ঞপ্তি: যোগ্য কৃষকরা ₹2,000 পাবেন।",
+    },
 }
 
-for lang, data in test_cases.items():
+
+def build_card(lang: str, data: dict):
   scene = SceneDefinition(
       scene_id=1,
       template_type=TemplateType.METRIC_FOCUS,
@@ -75,13 +99,27 @@ for lang, data in test_cases.items():
           highlight_sublabel=data["metric_sub"],
       ),
       asset=VisualAssetSelection(
-          asset_id="test", asset_type="static_graphic", file_path=""
+          asset_id=f"fonttest_{lang}",
+          asset_type="mesh_gradient",
+          file_path="",
+          accent_color="#38BDF8",
       ),
   )
 
-  img_array = render_scene_card_image(scene, lang=lang)
-  save_path = out_dir / f"test_card_{lang}.png"
-  Image.fromarray(img_array).save(save_path)
-  print(f"[OK] Generated: {save_path}")
+  canvas = (layers.VIDEO_WIDTH, layers.VIDEO_HEIGHT)
+  frame = layers.build_background_source(scene.asset, *canvas)
+  frame = frame.crop((0, 0, *canvas)).convert("RGBA")
+  static_layers = layers.build_static_layers(scene, lang, canvas)
+  for key in ("metric_card", "headline_subtext", "alert_pill"):
+    if key in static_layers:
+      frame.alpha_composite(static_layers[key])
+  return frame.convert("RGB")
 
-print("\n[SUCCESS] Open 'static/font_tests/' to inspect the rendered text.")
+
+if __name__ == "__main__":
+  for lang, data in test_cases.items():
+    save_path = out_dir / f"test_card_{lang}.png"
+    build_card(lang, data).save(save_path)
+    print(f"[OK] Generated: {save_path}")
+
+  print("\n[SUCCESS] Open 'static/font_tests/' to inspect the rendered text.")

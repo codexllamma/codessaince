@@ -168,15 +168,21 @@ def render_selftest(out_path: str = "assets/fonts/_selftest.png") -> Path:
     canvas = Image.new("RGBA", (1000, line_height * len(samples) + 20), (17, 17, 17, 255))
     draw = ImageDraw.Draw(canvas)
 
+    # The "[hi]" style label is Latin, so it must be drawn with the Latin face.
+    # Drawing it with the language's own font renders tofu for every Indic
+    # script and makes a working font look broken.
+    label_font = load_font("en", "bold", size_px)
+    label_width = measure_text("[xx] ", label_font)[0] + 8
+
     y = 10
     for lang, text in samples.items():
         path = _resolve_font_path(lang, "bold")
+        draw.text((10, y), f"[{lang}]", font=label_font, fill="#94A3B8")
         if path.exists():
             font = load_font(lang, "bold", size_px)
-            draw.text((10, y), f"[{lang}] {text}", font=font, fill="#F8FAFC")
+            draw.text((10 + label_width, y), text, font=font, fill="#F8FAFC")
         else:
-            fallback = load_font("en", "regular", size_px)
-            draw.text((10, y), f"[{lang}] MISSING: {path.name}", font=fallback, fill="#EF4444")
+            draw.text((10 + label_width, y), f"MISSING: {path.name}", font=label_font, fill="#EF4444")
         y += line_height
 
     out = Path(out_path)
