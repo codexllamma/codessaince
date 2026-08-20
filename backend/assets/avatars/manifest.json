@@ -33,5 +33,15 @@
     "licence": "Procedurally generated placeholder, no real person depicted",
     "disclosure_label": "AI-GENERATED PRESENTER"
   },
-  "avatars": []
+  "avatars": [
+    {
+      "avatar_id": "presenter_01",
+      "file": "presenter_01.mp4",
+      "languages": ["*"],
+      "display_name": "Presenter 01",
+      "source": "licensed_stock",
+      "licence": "UNCONFIRMED - source file was named 5940726-uhd_3840_2160_25fps.mp4, which is the Pexels download pattern. Replace with the actual licence and URL, or change source to consented_performer if this was filmed in-house.",
+      "disclosure_label": "NOT A GOVERNMENT OFFICIAL - AI-NARRATED"
+    }
+  ]
 }
