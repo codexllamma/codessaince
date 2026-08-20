@@ -61,7 +61,7 @@ def _banner(step: str, title: str) -> None:
 
 
 def run_pipeline(
-    raw_text: str,
+    raw_text: str = "",
     job_id: str = "pipeline_demo",
     lang: str = "en",
     out_path: Optional[Path] = None,
@@ -69,11 +69,12 @@ def run_pipeline(
     use_lipsync: bool = True,
     voice_id: Optional[str] = None,
     rate: str = "+0%",
+    facts: Optional[List[ExtractedFact]] = None,
 ) -> PipelineResult:
   """Run notice text all the way to a rendered MP4."""
   from compositor import layers, presenter as presenter_mod
   from services import anchor_loop, avatar_registry, narration
-  from services.fact_extractor import extract_facts_from_text
+  from services.fact_extractor import FactExtractor
   from services.scene_generator import build_scenes_from_facts
 
   t0 = time.time()
@@ -84,8 +85,13 @@ def run_pipeline(
 
   # ---------------------------------------------------------------- 1. facts
   _banner("1/7", "Fact extraction")
-  logger.info("input text (%d chars): %s", len(raw_text), raw_text[:160])
-  facts = extract_facts_from_text(raw_text)
+  if facts is None:
+      logger.info("input text (%d chars): %s", len(raw_text), raw_text[:160])
+      extractor = FactExtractor()
+      facts = extractor.extract_facts(raw_text)
+  else:
+      logger.info("Using %d pre-extracted facts.", len(facts))
+      
   if not facts:
     raise ValueError("no facts extracted; nothing to narrate")
   for f in facts:

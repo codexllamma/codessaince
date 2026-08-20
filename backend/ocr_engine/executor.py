@@ -58,10 +58,13 @@ def run_ephemeral_ocr(
     # If GPU failed, gracefully retry on CPU
     if process.returncode != 0 and target_gpu:
         cmd_cpu = [arg for arg in cmd if arg != "--use_gpu"]
+        env_cpu = os.environ.copy()
+        env_cpu["CUDA_VISIBLE_DEVICES"] = "-1"
         process = subprocess.run(
             cmd_cpu,
             capture_output=True,
-            text=True
+            text=True,
+            env=env_cpu
         )
 
     if process.returncode != 0:

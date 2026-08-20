@@ -264,9 +264,102 @@ def extract_facts_from_text(raw_text: str) -> List[ExtractedFact]:
     return facts
 
 
+import json
+import requests
+
+def try_ollama_extraction(raw_text: str) -> List[ExtractedFact]:
+    """Attempts to extract facts using local Ollama model."""
+    OLLAMA_URL = "http://localhost:11434/api/generate"
+    OLLAMA_MODEL = "llama3.2:3b"
+    
+    prompt = f"""
+    You are an expert data extractor. Extract ALL relevant information and key details from the following government notice text.
+    Be EXTENSIVE and thorough. Do not limit the number of facts; extract every single entity you can find.
+    Return ONLY a valid JSON array of objects. Do not include markdown formatting or explanations.
+    Each object must have exactly these keys:
+    "category": string (must be exactly one of: AUTHORITY, SCHEME_NAME, AMOUNT, DEADLINE, ACTION_REQUIRED, ELIGIBILITY, BENEFICIARY)
+    "raw_value": string (exact substring from the text, character for character)
+    "normalized_value": string (a clean, readable version of the fact)
+    
+    Notice Text:
+    {raw_text}
+    """
+    
+    try:
+        resp = requests.post(OLLAMA_URL, json={
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "format": "json",
+            "stream": False,
+        }, timeout=300)
+        
+        if resp.status_code != 200:
+            return []
+            
+        data = resp.json()
+        response_text = data.get("response", "[]")
+        parsed_facts = json.loads(response_text)
+        
+        facts = []
+        fact_id_counter = 1
+        
+        for item in parsed_facts:
+            if not isinstance(item, dict):
+                continue
+            cat_str = item.get("category", "")
+            if cat_str not in FactCategory.__members__:
+                continue
+                
+            raw_val = item.get("raw_value", "")
+            norm_val = item.get("normalized_value", raw_val)
+            
+            # Find the substring in the text to get offsets (grounding)
+            start_idx = raw_text.find(raw_val)
+            if start_idx == -1:
+                # If exact match fails, try case-insensitive
+                start_idx_lower = raw_text.lower().find(raw_val.lower())
+                if start_idx_lower != -1:
+                    start_idx = start_idx_lower
+                else:
+                    start_idx = 0
+            
+            end_idx = start_idx + len(raw_val) if start_idx != -1 else 0
+            
+            facts.append(
+                ExtractedFact(
+                    fact_id=f"ollama_f{fact_id_counter}",
+                    category=FactCategory[cat_str],
+                    raw_value=raw_val if start_idx != -1 else raw_val,
+                    normalized_value=norm_val,
+                    source_page=1,
+                    source_char_start=start_idx if start_idx != -1 else 0,
+                    source_char_end=end_idx if start_idx != -1 else len(raw_val),
+                    confidence_score=0.95,
+                    is_verified=True,
+                )
+            )
+            fact_id_counter += 1
+            
+        return facts
+    except Exception as e:
+        print(f"Ollama extraction failed: {e}")
+        return []
+
 class FactExtractor:
     """Grounded entity extraction and fact normalization interface."""
 
     def extract_facts(self, raw_text: str) -> List[ExtractedFact]:
-        """Extracts facts from raw extracted notice text."""
+        """Extracts facts from raw extracted notice text using local LLM or fallback."""
+        if not raw_text or not raw_text.strip():
+            return []
+            
+        print("Attempting fact extraction with local Ollama LLM (llama3.2:3b)...")
+        llm_facts = try_ollama_extraction(raw_text)
+        
+        if llm_facts and len(llm_facts) > 0:
+            print(f"Successfully extracted {len(llm_facts)} facts using local LLM.")
+            return llm_facts
+            
+        print("Local LLM extraction failed or returned zero facts. Falling back to Regex parser.")
         return extract_facts_from_text(raw_text)
+
