@@ -123,11 +123,16 @@ def render_frame(
     cx1: float,
     cy1: float,
     z_max: float = Z_MAX_DEFAULT,
+    resample: int = Image.LANCZOS,
 ) -> Image.Image:
-    """Crop the source at time t per the Ken Burns transform and resample to output size."""
+    """Crop the source at time t per the Ken Burns transform and resample to output size.
+
+    `resample` is the caller's speed/quality dial — the resize dominates
+    per-frame cost, so it is worth choosing deliberately per source type.
+    """
     box = crop_box(
         t, duration, output_w, output_h, cx0, cy0, cx1, cy1,
         source_img.width, source_img.height, z_max,
     )
     box = tuple(round(v) for v in box)
-    return source_img.crop(box).resize((output_w, output_h), Image.LANCZOS)
+    return source_img.crop(box).resize((output_w, output_h), resample)

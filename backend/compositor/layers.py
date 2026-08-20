@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
@@ -29,6 +30,13 @@ ALERT_PILL_INSET = 96
 ALERT_PILL_HEIGHT = 56
 HEADLINE_GAP_BELOW_PILL = 28
 METRIC_CARD_SIZE = (720, 320)
+PULSE_HZ = 0.8
+
+# LANCZOS costs ~43ms per 1080p frame against ~28ms for BILINEAR, and on the
+# smooth gradients and video loops used as backgrounds the two differ by at
+# most 3/255 per channel. Raise this to LANCZOS for stills with fine detail
+# where the extra 15ms per frame is worth paying.
+KENBURNS_RESAMPLE = Image.BILINEAR
 
 
 def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
@@ -204,6 +212,36 @@ def build_static_layers(
     return layers
 
 
+@dataclass(frozen=True)
+class _Sprite:
+    """A layer cropped to its non-transparent bounds, plus where to paste it.
+
+    Compositing a full 1920x1080 RGBA layer costs ~6ms even when only a
+    fraction of it is inked. Most layers occupy a band — the headline sits in
+    the upper third, captions in the bottom 22% — so pasting just the inked
+    region is several times cheaper for an identical result.
+    """
+
+    image: Image.Image
+    box: Tuple[int, int]
+
+    @classmethod
+    def from_layer(cls, layer: Image.Image) -> Optional["_Sprite"]:
+        bbox = layer.getbbox()
+        if bbox is None:
+            return None
+        return cls(image=layer.crop(bbox), box=(bbox[0], bbox[1]))
+
+    def paste_onto(self, frame: Image.Image) -> None:
+        frame.paste(self.image, self.box, self.image)
+
+
+# Discrete steps for the alert pill pulse. Re-deriving the alpha per frame cost
+# ~7ms in channel splitting; at 0.8Hz one cycle spans ~37 frames at 30fps, so
+# 24 precomputed steps is past the point of visible banding.
+_PILL_ALPHA_STEPS = 24
+
+
 def make_frame_function(
     scene: SceneDefinition,
     static_layers: Dict[str, Image.Image],
@@ -211,19 +249,46 @@ def make_frame_function(
     bg_source: Image.Image,
     pan_targets: Tuple[float, float, float, float],
     canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT),
+    resample: int = KENBURNS_RESAMPLE,
 ) -> Callable[[float], np.ndarray]:
     W, H = canvas_size
     cx0, cy0, cx1, cy1 = pan_targets
     duration = scene.scene_duration_sec
 
+    # Merge everything that never changes into one sprite: two composites
+    # become one, and the merge happens once instead of 30 times a second.
+    static_merged = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    if "metric_card" in static_layers:
+        static_merged.alpha_composite(static_layers["metric_card"])
+    static_merged.alpha_composite(static_layers["headline_subtext"])
+    static_sprite = _Sprite.from_layer(static_merged)
+
+    pill_sprites = [
+        _Sprite.from_layer(_with_alpha(static_layers["alert_pill"], 0.85 + 0.15 * math.sin(2 * math.pi * i / _PILL_ALPHA_STEPS)))
+        for i in range(_PILL_ALPHA_STEPS)
+    ]
+    caption_sprites = {id(img): _Sprite.from_layer(img) for _, img in caption_cache}
+
     def frame_function(t: float) -> np.ndarray:
-        frame = kenburns.render_frame(bg_source, t, duration, W, H, cx0, cy0, cx1, cy1).convert("RGBA")
-        frame.alpha_composite(karaoke.get_caption_frame_for_time(caption_cache, t))
-        if "metric_card" in static_layers:
-            frame.alpha_composite(static_layers["metric_card"])
-        frame.alpha_composite(static_layers["headline_subtext"])
-        frame.alpha_composite(_with_alpha(static_layers["alert_pill"], alert_pill_alpha(t)))
-        return np.asarray(frame.convert("RGB"))
+        frame = kenburns.render_frame(
+            bg_source, t, duration, W, H, cx0, cy0, cx1, cy1, resample=resample
+        )
+        if frame.mode != "RGB":
+            frame = frame.convert("RGB")
+
+        caption = karaoke.get_caption_frame_for_time(caption_cache, t)
+        sprite = caption_sprites.get(id(caption))
+        if sprite is not None:
+            sprite.paste_onto(frame)
+        if static_sprite is not None:
+            static_sprite.paste_onto(frame)
+
+        pill = pill_sprites[int(t * PULSE_HZ * _PILL_ALPHA_STEPS) % _PILL_ALPHA_STEPS]
+        if pill is not None:
+            pill.paste_onto(frame)
+        # Already RGB — pasting with a mask blends in place, so no final
+        # convert() copy of two million pixels is needed.
+        return np.asarray(frame)
 
     return frame_function
 
