@@ -91,6 +91,26 @@ def available_categories() -> Tuple[str, ...]:
   return tuple(sorted({img.category for img in _load_index()}))
 
 
+def _best_scoring(candidates: Tuple[LibraryImage, ...], scene_text: str) -> List[LibraryImage]:
+  """Candidates scoring highest against `scene_text`, or all of them if
+  nothing scored above zero (empty text, or no tag matched anything)."""
+  if not scene_text:
+    return list(candidates)
+  search_corpus = scene_text.lower()
+  scores = [sum(2 for tag in img.tags if tag in search_corpus) for img in candidates]
+  best_score = max(scores)
+  if best_score == 0:
+    return list(candidates)
+  return [img for img, score in zip(candidates, scores) if score == best_score]
+
+
+def _pick_deterministic(pool: List[LibraryImage], salt: str, seed: str) -> LibraryImage:
+  """Stable hash pick, never random — so a demo does not visibly reshuffle
+  its own backgrounds between identical re-renders."""
+  digest = hashlib.sha256(f"{salt}|{seed}".encode("utf-8")).digest()
+  return pool[int.from_bytes(digest[:4], "big") % len(pool)]
+
+
 def select_image(category: str, scene_text: str = "", seed: str = "") -> Optional[LibraryImage]:
   """The image for `category`, or None if that category has nothing.
 
@@ -105,26 +125,36 @@ def select_image(category: str, scene_text: str = "", seed: str = "") -> Optiona
 
   Ties (including the "no scene_text" and "nothing matched" cases, which are
   a tie across the full candidate pool at score 0) are broken by a stable
-  hash of (category, seed) rather than randomly, so the same scene gets the
-  same image across repeated renders — a demo should not visibly reshuffle
-  its own backgrounds between takes. Pass a per-job or per-scene seed (e.g.
-  the scene_id) to vary the pick across scenes that share a category.
+  hash of (category, seed) rather than randomly. Pass a per-job or per-scene
+  seed (e.g. the scene_id) to vary the pick across scenes that share a
+  category.
   """
-  candidates = [img for img in _load_index() if img.category == category]
+  candidates = tuple(img for img in _load_index() if img.category == category)
   if not candidates:
     return None
+  pool = _best_scoring(candidates, scene_text)
+  return _pick_deterministic(pool, category, seed)
 
-  pool = candidates
-  if scene_text:
-    search_corpus = scene_text.lower()
-    scores = [
-        sum(2 for tag in img.tags if tag in search_corpus)
-        for img in candidates
-    ]
-    best_score = max(scores)
-    if best_score > 0:
-      pool = [img for img, score in zip(candidates, scores) if score == best_score]
 
-  digest = hashlib.sha256(f"{category}|{seed}".encode("utf-8")).digest()
-  index = int.from_bytes(digest[:4], "big") % len(pool)
-  return pool[index]
+def select_generic_image(scene_text: str = "", seed: str = "") -> Optional[LibraryImage]:
+  """Any image in the library, regardless of category — the floor beneath
+  the procedural gradient.
+
+  A government-notice video that always shows a real photograph reads as a
+  finished broadcast; one that drops to a flat gradient whenever a scene's
+  specific category (AMOUNT, DEADLINE, ...) has not been seeded yet reads as
+  an unfinished one, even though the gradient exists for exactly that
+  situation and is a deliberate, tested fallback (README §10.2). So this
+  sits between select_image and the gradient in the fallback order: try the
+  fact-relevant category first, then any image at all, then the gradient
+  only if the library is completely empty.
+
+  Still scored against `scene_text` where it can be, so "any image" does not
+  mean "an obviously wrong one" if something in the library happens to match
+  regardless of which category it was filed under.
+  """
+  candidates = _load_index()
+  if not candidates:
+    return None
+  pool = _best_scoring(candidates, scene_text)
+  return _pick_deterministic(pool, "__generic__", seed)

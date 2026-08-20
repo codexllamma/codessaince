@@ -126,17 +126,28 @@ def _prefer_library_image(
   if template_default and template_default not in ordered:
     ordered.append(template_default)
 
+  def _as_asset(image) -> VisualAssetSelection:
+    return VisualAssetSelection(
+        asset_id=f"library_{image.path.stem}",
+        asset_type="static_graphic",
+        file_path=str(image.path.relative_to(Path(__file__).resolve().parent.parent)).replace("\\", "/"),
+        accent_color=selection.accent_color,
+        dim_overlay_opacity=0.65,
+    )
+
   try:
     for category in ordered:
       image = image_library.select_image(category, scene_text=scene_text, seed=scene_text)
       if image is not None:
-        return VisualAssetSelection(
-            asset_id=f"library_{image.path.stem}",
-            asset_type="static_graphic",
-            file_path=str(image.path.relative_to(Path(__file__).resolve().parent.parent)).replace("\\", "/"),
-            accent_color=selection.accent_color,
-            dim_overlay_opacity=0.65,
-        )
+        return _as_asset(image)
+
+    # Nothing matched the scene's own facts. A real photograph — even one
+    # filed under an unrelated category — reads as a finished broadcast;
+    # the gradient is the fallback for when the library has nothing at all,
+    # not for every scene whose specific category is still unseeded.
+    image = image_library.select_generic_image(scene_text=scene_text, seed=scene_text)
+    if image is not None:
+      return _as_asset(image)
   except Exception:  # never let asset selection break scene generation
     return selection
 

@@ -165,3 +165,38 @@ def test_sidecar_without_tags_key_loads_with_empty_tags_and_is_a_valid_pick(isol
   picked_with_scene_text = lib.select_image("DEADLINE", scene_text="the deadline is approaching fast")
   assert picked_with_scene_text is not None
   assert picked_with_scene_text.path.name == "clock_1.jpg"
+
+
+# --- select_generic_image ---------------------------------------------------
+
+
+def test_generic_image_returns_none_for_an_empty_library():
+  assert lib.select_generic_image() is None
+
+
+def test_generic_image_picks_across_categories(isolated_library):
+  """The whole point: a category with nothing still gets a real photo, from
+  wherever the library actually has one."""
+  _seed(isolated_library, "AUTHORITY", "building_1")
+  picked = lib.select_generic_image()
+  assert picked is not None
+  assert picked.category == "AUTHORITY"
+
+
+def test_generic_image_is_deterministic(isolated_library):
+  _seed(isolated_library, "AUTHORITY", "a")
+  _seed(isolated_library, "ELIGIBILITY", "b")
+  lib.reload_index()
+  first = lib.select_generic_image(seed="scene-1")
+  second = lib.select_generic_image(seed="scene-1")
+  assert first.path == second.path
+
+
+def test_generic_image_still_scores_by_tags_when_possible(isolated_library):
+  """'Generic' means no category filter, not 'ignore relevance' — a
+  cross-category tag match should still win over one that matches nothing."""
+  _seed(isolated_library, "AUTHORITY", "building_1", tags=["ministry", "official"])
+  _seed(isolated_library, "ELIGIBILITY", "village_1", tags=["village", "rural"])
+  lib.reload_index()
+  picked = lib.select_generic_image(scene_text="visit the official ministry portal")
+  assert picked.path.name == "building_1.jpg"
