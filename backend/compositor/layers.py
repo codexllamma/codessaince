@@ -56,29 +56,32 @@ def build_background_source(
     canvas_h: int = VIDEO_HEIGHT,
     z_max: float = kenburns.Z_MAX_DEFAULT,
 ) -> Image.Image:
-    """Procedural tinted gradient background (README §10.2 fallback), pre-rendered
-    once at >= z_max * canvas size so Ken Burns can crop/pan without upscaling.
+    """The still image Ken Burns pans across for this scene.
 
-    Video-loop and static-graphic assets are not composited yet. Rather than
-    refusing them, we degrade to the gradient — §10.2 already specifies that a
-    scene with no usable asset falls back to a tinted mesh gradient, which
-    "always looks intentional and never looks broken". The scene generator
-    emits video_loop paths for B-roll that is not in the repo yet, so this is
-    the live path until those assets are licensed and added.
+    Handles static_graphic (a real B-roll still) and mesh_gradient (the §10.2
+    procedural fallback). Anything present on disk is used; anything missing
+    degrades to the gradient, which §10.2 specifies "always looks intentional
+    and never looks broken" — a scene should never fail for want of an asset.
+
+    Video loops are handled separately by build_background_video, because a
+    clip cannot be reduced to one image.
     """
+    if asset.asset_type == "static_graphic":
+        image = _load_asset_image(asset, canvas_w, canvas_h, z_max)
+        if image is not None:
+            return _apply_dim_overlay(image, asset.dim_overlay_opacity)
+    elif asset.asset_type == "video_loop":
+        # The caller asks for a still even for a clip, as a fallback for when
+        # the video cannot be opened. Use its first frame if we can.
+        image = _first_video_frame(asset, canvas_w, canvas_h, z_max)
+        if image is not None:
+            return _apply_dim_overlay(image, asset.dim_overlay_opacity)
+
     if asset.asset_type != "mesh_gradient":
-        path = Path(asset.file_path) if asset.file_path else None
-        if path is not None and path.exists():
-            logger.warning(
-                "asset %s (%s) exists but %s compositing is not implemented yet; "
-                "using the mesh_gradient fallback",
-                asset.asset_id, asset.file_path, asset.asset_type,
-            )
-        else:
-            logger.info(
-                "asset %s (%s) not present on disk; using the mesh_gradient fallback (README §10.2)",
-                asset.asset_id, asset.file_path,
-            )
+        logger.info(
+            "asset %s (%s, %s) unavailable; using the mesh_gradient fallback (README §10.2)",
+            asset.asset_id, asset.file_path or "<no path>", asset.asset_type,
+        )
 
     w, h = round(z_max * canvas_w), round(z_max * canvas_h)
     accent = _hex_to_rgb(asset.accent_color)
@@ -102,12 +105,187 @@ def build_background_source(
     # Mode is inferred from the (h, w, 3) uint8 shape; passing it explicitly is
     # deprecated and removed in Pillow 13.
     img = Image.fromarray(gradient).convert("RGBA")
+    return _apply_dim_overlay(img, asset.dim_overlay_opacity)
 
-    if asset.dim_overlay_opacity > 0:
-        overlay = Image.new("RGBA", (w, h), (0, 0, 0, round(255 * asset.dim_overlay_opacity)))
-        img = Image.alpha_composite(img, overlay)
 
-    return img
+def _cover_fit(
+    img: Image.Image, target_w: int, target_h: int, resample: int = Image.LANCZOS
+) -> Image.Image:
+    """Scale to cover target_w x target_h, centre-cropped. Never letterboxes:
+    a bar down the side of a government notice reads as a mistake.
+
+    Stills are fitted once per scene so they get LANCZOS; clip frames are
+    fitted once per rendered frame and pass BILINEAR instead.
+    """
+    if img.width == target_w and img.height == target_h:
+        # B-roll authored at the output size is the common case, and resizing
+        # it to itself costs ~40ms a frame for nothing.
+        return img.convert("RGBA")
+
+    scale = max(target_w / img.width, target_h / img.height)
+    resized = img.resize(
+        (max(round(img.width * scale), target_w), max(round(img.height * scale), target_h)),
+        resample,
+    )
+    left = (resized.width - target_w) // 2
+    top = (resized.height - target_h) // 2
+    return resized.crop((left, top, left + target_w, top + target_h)).convert("RGBA")
+
+
+def _apply_dim_overlay(img: Image.Image, opacity: float) -> Image.Image:
+    """B-roll is a backdrop for text, so it is dimmed before anything lands on
+    it (§8.6 layer 1). Without this, captions lose contrast over bright areas.
+
+    Compositing black at alpha `a` is the same as scaling each channel by
+    (1 - a), and the multiply is roughly half the cost of building an overlay
+    image and alpha-compositing it — which matters because clip frames are
+    dimmed once per rendered frame.
+    """
+    if opacity <= 0:
+        return img
+    keep = 1.0 - min(opacity, 1.0)
+    rgb = np.asarray(img.convert("RGB"), dtype=np.uint16)
+    dimmed = (rgb * int(keep * 256) >> 8).astype(np.uint8)
+    return Image.fromarray(dimmed).convert("RGBA")
+
+
+def _asset_path(asset: VisualAssetSelection) -> Optional[Path]:
+    if not asset.file_path:
+        return None
+    path = Path(asset.file_path)
+    return path if path.is_file() else None
+
+
+def _load_asset_image(
+    asset: VisualAssetSelection, canvas_w: int, canvas_h: int, z_max: float
+) -> Optional[Image.Image]:
+    path = _asset_path(asset)
+    if path is None:
+        return None
+    try:
+        with Image.open(path) as raw:
+            raw.load()
+            source = raw.convert("RGB")
+    except Exception:
+        logger.warning("could not read image asset %s at %s", asset.asset_id, path, exc_info=True)
+        return None
+
+    target = (round(z_max * canvas_w), round(z_max * canvas_h))
+    if source.width < target[0] or source.height < target[1]:
+        # Upscaling past native resolution is exactly what §8.6 forbids, but a
+        # slightly soft background beats failing the scene. Warn so the asset
+        # can be replaced with one that meets the 2560x1440 recommendation.
+        logger.warning(
+            "asset %s is %dx%d, below the %dx%d needed for Ken Burns headroom; it will be upscaled",
+            asset.asset_id, source.width, source.height, *target,
+        )
+    return _cover_fit(source, *target)
+
+
+def _first_video_frame(
+    asset: VisualAssetSelection, canvas_w: int, canvas_h: int, z_max: float
+) -> Optional[Image.Image]:
+    path = _asset_path(asset)
+    if path is None:
+        return None
+    try:
+        from moviepy import VideoFileClip
+
+        with VideoFileClip(str(path)) as clip:
+            frame = Image.fromarray(clip.get_frame(0))
+    except Exception:
+        logger.warning("could not read video asset %s at %s", asset.asset_id, path, exc_info=True)
+        return None
+    return _cover_fit(frame, round(z_max * canvas_w), round(z_max * canvas_h))
+
+
+class VideoBackground:
+    """A B-roll clip, decoded on demand and looped to any scene length.
+
+    Not pre-decoded like the presenter loop: a full-frame background is ~6MB
+    per frame, so a 10s clip would run to gigabytes. Rendering walks time
+    forwards, which is what MoviePy's reader is fastest at, and the single
+    backward seek per loop is cheap by comparison.
+
+    Frames are fitted straight to the output size, not to Ken Burns headroom,
+    and the compositor skips the Ken Burns pass for clips. A moving clip is
+    already the "ambient motion" §8.6 wants; panning across it would mean
+    upscaling every frame past its native resolution — the one thing §8.6
+    explicitly forbids — to add motion that is already there. Doing both cost
+    two resizes per frame and 103ms; this costs one.
+    """
+
+    def __init__(self, clip, canvas_w: int, canvas_h: int, z_max: float, dim: float):
+        self.clip = clip
+        self.target = (canvas_w, canvas_h)
+        self.dim = dim
+        self.duration = float(clip.duration or 0.0)
+        self._last_key = None
+        self._last_frame = None
+
+    @classmethod
+    def load(
+        cls, asset: VisualAssetSelection, canvas_w: int, canvas_h: int, z_max: float
+    ) -> Optional["VideoBackground"]:
+        path = _asset_path(asset)
+        if path is None or asset.asset_type != "video_loop":
+            return None
+        try:
+            from moviepy import VideoFileClip
+
+            clip = VideoFileClip(str(path))
+        except Exception:
+            logger.warning("could not open video asset %s at %s", asset.asset_id, path, exc_info=True)
+            return None
+        if not clip.duration:
+            clip.close()
+            return None
+        logger.info("B-roll %s: %.1fs loop from %s", asset.asset_id, clip.duration, path)
+        return cls(clip, canvas_w, canvas_h, z_max, asset.dim_overlay_opacity)
+
+    def frame_at(self, t: float) -> Image.Image:
+        """The dimmed, output-sized frame for time `t`, as RGB.
+
+        Deliberately numpy-first: the naive route (fromarray, convert RGBA,
+        convert back to RGB to dim, convert to RGBA again) spent most of its
+        time on full-frame mode conversions the compositor then undoes, since
+        frame_function wants RGB anyway.
+        """
+        wrapped = t % self.duration if self.duration else 0.0
+        # Quantise so repeated calls at the same output frame reuse the decode.
+        key = round(wrapped * VIDEO_FPS)
+        if key == self._last_key and self._last_frame is not None:
+            return self._last_frame
+
+        arr = self.clip.get_frame(wrapped)
+        target_w, target_h = self.target
+        if (arr.shape[1], arr.shape[0]) != (target_w, target_h):
+            fitted = _cover_fit(Image.fromarray(arr), target_w, target_h, resample=KENBURNS_RESAMPLE)
+            arr = np.asarray(fitted.convert("RGB"))
+
+        if self.dim > 0:
+            keep = int((1.0 - min(self.dim, 1.0)) * 256)
+            arr = ((arr.astype(np.uint16) * keep) >> 8).astype(np.uint8)
+
+        frame = Image.fromarray(arr)
+        self._last_key, self._last_frame = key, frame
+        return frame
+
+    def close(self) -> None:
+        try:
+            self.clip.close()
+        except Exception:
+            logger.debug("failed to close background clip", exc_info=True)
+
+
+def build_background_video(
+    asset: VisualAssetSelection,
+    canvas_w: int = VIDEO_WIDTH,
+    canvas_h: int = VIDEO_HEIGHT,
+    z_max: float = kenburns.Z_MAX_DEFAULT,
+) -> Optional[VideoBackground]:
+    """A VideoBackground for video_loop assets, or None for everything else."""
+    return VideoBackground.load(asset, canvas_w, canvas_h, z_max)
 
 
 def _build_metric_card(
@@ -303,6 +481,7 @@ def make_frame_function(
     resample: int = KENBURNS_RESAMPLE,
     presenter_source=None,
     presenter_layout=None,
+    bg_video: Optional["VideoBackground"] = None,
 ) -> Callable[[float], np.ndarray]:
     W, H = canvas_size
     cx0, cy0, cx1, cy1 = pan_targets
@@ -324,9 +503,14 @@ def make_frame_function(
     caption_sprites = {id(img): _Sprite.from_layer(img) for _, img in caption_cache}
 
     def frame_function(t: float) -> np.ndarray:
-        frame = kenburns.render_frame(
-            bg_source, t, duration, W, H, cx0, cy0, cx1, cy1, resample=resample
-        )
+        if bg_video is not None:
+            # The clip already carries the motion; it arrives at output size
+            # and needs no Ken Burns pass on top. See VideoBackground.
+            frame = bg_video.frame_at(t)
+        else:
+            frame = kenburns.render_frame(
+                bg_source, t, duration, W, H, cx0, cy0, cx1, cy1, resample=resample
+            )
         if frame.mode != "RGB":
             frame = frame.convert("RGB")
 
@@ -408,6 +592,7 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
     content_box = presenter_layout.content_box if presenter_layout is not None else None
 
     bg_source = build_background_source(scene.asset, *canvas_size)
+    bg_video = build_background_video(scene.asset, *canvas_size)
     static_layers = build_static_layers(scene, lang, canvas_size, content_box)
     caption_layout = karaoke.build_caption_layout(scene.subtitles, lang, canvas_size)
     caption_cache = karaoke.build_caption_frame_cache(caption_layout)
@@ -418,8 +603,13 @@ def render_scene_clip(scene: SceneDefinition, lang: str, scene_index: int, canva
     frame_fn = make_frame_function(
         scene, static_layers, caption_cache, bg_source, pan_targets, canvas_size,
         presenter_source=presenter_source, presenter_layout=presenter_layout,
+        bg_video=bg_video,
     )
     clip = VideoClip(frame_function=frame_fn, duration=scene.scene_duration_sec).with_fps(VIDEO_FPS)
+    if bg_video is not None:
+        # Tie the reader's lifetime to the clip so render_job's close() loop
+        # releases it; a leaked reader keeps an ffmpeg subprocess alive.
+        clip._broll_background = bg_video
 
     audio_file = resolve_audio_path(scene.audio_path)
     if audio_file is not None:
@@ -485,6 +675,9 @@ def render_job(scenes, lang: str, out_path: str, codec_pref: str = "h264_nvenc",
         # until the clip is closed; a leaked handle blocks the next render of
         # the same job from overwriting its own output.
         for clip in (final, *clips):
+            background = getattr(clip, "_broll_background", None)
+            if background is not None:
+                background.close()
             try:
                 clip.close()
             except Exception:
