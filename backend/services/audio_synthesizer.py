@@ -73,11 +73,25 @@ async def synthesize_scene(
   file_name = f"{job_id}_{lang}_scene_{scene.scene_id}.mp3"
   file_path = output_dir / file_name
 
-  communicate = edge_tts.Communicate(
-      text=scene.full_spoken_text,
-      voice=voice_id,
-      rate=speed_mod,
-  )
+  # boundary= must be asked for explicitly. edge-tts >= 7 defaults it to
+  # "SentenceBoundary", which emits one event for the whole scene and no
+  # WordBoundary events at all -- so the loop below collected nothing and
+  # every scene silently fell through to generate_fallback_timestamps().
+  # Karaoke was therefore highlighting on estimated character-length pacing
+  # rather than on where the voice actually says each word.
+  try:
+    communicate = edge_tts.Communicate(
+        text=scene.full_spoken_text,
+        voice=voice_id,
+        rate=speed_mod,
+        boundary="WordBoundary",
+    )
+  except TypeError:  # edge-tts < 7 has no boundary argument and is word-level
+    communicate = edge_tts.Communicate(
+        text=scene.full_spoken_text,
+        voice=voice_id,
+        rate=speed_mod,
+    )
 
   raw_subtitles: List[WordTimestamp] = []
 
