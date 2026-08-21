@@ -109,6 +109,18 @@ export interface NoticeVideoJob {
   final_srt_paths?: Record<string, string>;
 }
 
+export interface WarmupComponentStatus {
+  ok: boolean;
+  detail: string;
+  elapsed_sec: number;
+}
+
+export interface WarmupResponse {
+  wav2lip: WarmupComponentStatus;
+  ollama: WarmupComponentStatus;
+  total_elapsed_sec: number;
+}
+
 export interface UploadDocResult {
   status: string;
   extracted_facts: ExtractedFact[];
@@ -265,6 +277,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lang, character, voice }),
     });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  // Pre-load Wav2Lip and Ollama before the officer starts a real job, so the
+  // first render/extraction doesn't pay their one-time cold-start cost while
+  // someone is watching a progress bar. Never throws for a component that
+  // failed to warm -- per-component `ok` says whether it actually loaded; a
+  // missing Ollama install is a normal, reportable state, not an error.
+  warmup: async (): Promise<WarmupResponse> => {
+    const res = await fetch(`${BASE_URL}/api/warmup`, { method: 'POST' });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },

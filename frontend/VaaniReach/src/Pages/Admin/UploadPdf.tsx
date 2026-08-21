@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-toastify'
-import { UploadCloud, FileText, CheckCircle2, ArrowRight } from 'lucide-react'
+import { UploadCloud, FileText, CheckCircle2, ArrowRight, Flame, Loader2, CircleCheck, CircleAlert } from 'lucide-react'
 import PageShell from '../../Components/PageShell'
 import Card from '../../Components/UI/Card'
 import Button from '../../Components/UI/Button'
 import StepProgress from '../../Components/UI/StepProgress'
 import { useApp } from '../../Context/AppContext'
+import { api, type WarmupResponse } from '../../api/client'
 
 const STEPS = ['Upload', 'Categorize', 'Ingest', 'Fact grounding', 'Storyboard', 'Voice', 'Approval']
 
@@ -19,6 +20,26 @@ export default function UploadPdf() {
   const { uploadedFile, setUploadedFile, uploadedFileName, setUploadedFileName, resetJob } = useApp()
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const [warmingUp, setWarmingUp] = useState(false)
+  const [warmupResult, setWarmupResult] = useState<WarmupResponse | null>(null)
+
+  const handleWarmup = async () => {
+    setWarmingUp(true)
+    try {
+      const result = await api.warmup()
+      setWarmupResult(result)
+      if (result.wav2lip.ok) {
+        toast.success(`Presenter model ready (${result.total_elapsed_sec.toFixed(1)}s).`)
+      } else {
+        toast.error('Presenter model failed to warm up — check the backend log.')
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Warmup request failed.')
+    } finally {
+      setWarmingUp(false)
+    }
+  }
 
   const handleFile = (file?: File) => {
     // No fallback filename: a missing file has to stay missing, otherwise the
@@ -54,6 +75,55 @@ export default function UploadPdf() {
 
         <h1 className="mt-8 font-display text-3xl font-semibold text-plum-900">Upload a notice</h1>
         <p className="mt-2 text-plum-800/70">Start with the official press release or notice as a PDF.</p>
+
+        {/* Optional, independent of the upload flow: loads the presenter
+            model and the local LLM extractor ahead of time, so their one-time
+            cold-start cost doesn't land on the officer during a real render. */}
+        <Card className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-skycandy-100 text-skycandy-600">
+              <Flame size={18} />
+            </span>
+            <div>
+              <p className="text-sm font-medium text-plum-900">Warm up models</p>
+              <p className="text-xs text-plum-800/55">
+                Loads the presenter and extraction models now, so the render step doesn't wait on it later.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleWarmup()}
+            disabled={warmingUp}
+            icon={warmingUp ? <Loader2 size={15} className="animate-spin" /> : <Flame size={15} />}
+          >
+            {warmingUp ? 'Warming up…' : 'Warm up now'}
+          </Button>
+        </Card>
+
+        {warmupResult && (
+          <div className="mt-3 flex flex-wrap gap-3 text-xs">
+            <span
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 font-medium ${
+                warmupResult.wav2lip.ok ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+              }`}
+              title={warmupResult.wav2lip.detail}
+            >
+              {warmupResult.wav2lip.ok ? <CircleCheck size={13} /> : <CircleAlert size={13} />}
+              Presenter (Wav2Lip): {warmupResult.wav2lip.ok ? `ready in ${warmupResult.wav2lip.elapsed_sec}s` : 'failed'}
+            </span>
+            <span
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 font-medium ${
+                warmupResult.ollama.ok ? 'bg-green-100 text-green-700' : 'bg-plum-800/10 text-plum-800/60'
+              }`}
+              title={warmupResult.ollama.detail}
+            >
+              {warmupResult.ollama.ok ? <CircleCheck size={13} /> : <CircleAlert size={13} />}
+              Extraction (Ollama): {warmupResult.ollama.ok ? `ready in ${warmupResult.ollama.elapsed_sec}s` : 'not available'}
+            </span>
+          </div>
+        )}
 
         <div
           onDragOver={(e) => {
