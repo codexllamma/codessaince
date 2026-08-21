@@ -1,4 +1,51 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600&display=swap");
 @import "tailwindcss";
+
+/* This app's whole colour system, both custom fonts and the "glow" shadow
+ * were referenced everywhere (blossom-*, skycandy-*, plum-*, font-display,
+ * font-body, shadow-glow) but never once defined. Tailwind v4 silently drops
+ * a utility it does not recognise rather than erroring, so every gradient
+ * button, every "selected" state and every heading rendered with no colour
+ * or font at all -- e.g. a selected language tile was
+ * `bg-linear-to-r from-blossom-400 to-blossom-500 text-white shadow-glow`,
+ * which resolved to just `text-white` on nothing, i.e. invisible.
+ *
+ * Values are not invented: #FFA9C6, #FFF6F9, #FFCBDE, #E14A79, #7CC6E8 and
+ * #33202B were already hand-picked and hardcoded elsewhere in this file (the
+ * scrollbar, the text-selection colour, the text-gradient, the focus ring
+ * and the body text colour), so the shade ramps below are built outward from
+ * those exact colours rather than guessed from nothing. */
+@theme {
+  --font-display: "Sora", "Segoe UI", sans-serif;
+  --font-body: "Inter", "Segoe UI", sans-serif;
+
+  --color-blossom-50: #FFF6F9;
+  --color-blossom-100: #FFE9F0;
+  --color-blossom-200: #FFCBDE;
+  --color-blossom-300: #FFA9C6;
+  --color-blossom-400: #F97CA0;
+  --color-blossom-500: #E14A79;
+  --color-blossom-600: #C93564;
+  --color-blossom-700: #A82650;
+  --color-blossom-800: #7C1B3B;
+
+  --color-skycandy-100: #EAF7FD;
+  --color-skycandy-200: #D2EEFA;
+  --color-skycandy-300: #AEE1F5;
+  --color-skycandy-400: #7CC6E8;
+  --color-skycandy-500: #52AAD6;
+  --color-skycandy-600: #3689B8;
+  --color-skycandy-700: #256D97;
+  --color-skycandy-800: #1B5476;
+
+  --color-plum-800: #4A2E3C;
+  --color-plum-900: #33202B;
+
+  --color-lavendercandy: #E3D5FA;
+  --color-peachcandy: #FFD9BE;
+
+  --shadow-glow: 0 10px 32px -8px rgba(225, 74, 121, 0.38), 0 3px 10px -3px rgba(225, 74, 121, 0.22);
+}
 
 @supports (scrollbar-width: thin) {
   * {

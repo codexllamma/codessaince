@@ -92,16 +92,36 @@ class RunE2ERequest(BaseModel):
     character: str
     voice: str
 
+# LanguageSelect.tsx offers Gujarati, Kannada, Malayalam and Punjabi, but
+# services.audio_synthesizer.VOICE_MAPPING has no edge-tts voice for any of
+# them. narration.py falls back to the English voice when a language is
+# unmapped -- so those four would silently narrate in English while the UI
+# claims to be speaking the selected language. That is worse than an error:
+# a wrong video that looks right. Gate on it explicitly rather than let it
+# through quietly. Keep in sync with VOICE_MAPPING in audio_synthesizer.py.
+E2E_SUPPORTED_LANGS = {"en", "hi", "ta", "te", "bn", "mr"}
+
 def _run_e2e_sync(req: RunE2ERequest) -> dict:
     from ocr_engine.executor import run_ephemeral_ocr
     from services.fact_extractor import FactExtractor
     from services.pipeline import run_pipeline
     import time
-    
+
+    if req.lang not in E2E_SUPPORTED_LANGS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"lang={req.lang!r} has no text-to-speech voice configured "
+                f"(supported: {sorted(E2E_SUPPORTED_LANGS)}). Narrating it "
+                "anyway would silently fall back to an English voice while "
+                "claiming to be this language."
+            ),
+        )
+
     pdf_path = Path(__file__).resolve().parent.parent.parent / "ocr_engine" / f"extensive_test_{req.lang}.pdf"
     if not pdf_path.exists():
         pdf_path = Path(__file__).resolve().parent.parent.parent / "ocr_engine" / "extensive_test_en.pdf"
-        
+
     ocr_result = run_ephemeral_ocr(str(pdf_path), lang=req.lang)
     raw_text = ocr_result.get("raw_text", "")
     
@@ -119,9 +139,24 @@ def _run_e2e_sync(req: RunE2ERequest) -> dict:
         voice_id=req.voice
     )
     
+    # Hand back a URL the browser can actually fetch, not the absolute path on
+    # this machine. run_pipeline writes into backend/out/, which server.py
+    # mounts at /out; returning str(video_path) gave the frontend something
+    # like "C:\...\backend\out\x.mp4", which it can only concatenate onto the
+    # API base to produce a dead link.
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    video_path = Path(pipeline_result.video_path)
+    try:
+        rel = video_path.relative_to(backend_dir)
+        video_url = "/" + rel.as_posix()
+    except ValueError:
+        # Rendered somewhere outside the tree; serving it is the caller's
+        # problem, but say so plainly rather than emitting a broken path.
+        video_url = video_path.as_uri()
+
     return {
         "status": "success",
-        "video_path": str(pipeline_result.video_path),
+        "video_path": video_url,
         "facts": [f.model_dump() for f in facts]
     }
 

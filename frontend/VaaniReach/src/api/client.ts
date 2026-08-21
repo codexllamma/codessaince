@@ -242,6 +242,33 @@ export const api = {
     return res.json();
   },
 
+  // One-shot pipeline for the citizen-facing flow: pick a language, a
+  // presenter and a voice, get a finished video back.
+  //
+  // Note what this does NOT do: it reads a pre-generated notice PDF on the
+  // server (ocr_engine/extensive_test_<lang>.pdf) rather than anything the
+  // caller uploads. The officer flow is the one that ingests a real document
+  // -- upload-doc, then createJob and the per-stage routes below. Do not use
+  // this for a notice a user supplied; it will silently narrate a different
+  // document.
+  //
+  // Runs OCR, extraction, narration, lip-sync and the render in one request,
+  // so it takes MINUTES. Give it a long-running UI, not a spinner that looks
+  // like it hung.
+  runE2E: async (
+    lang: string,
+    character: string,
+    voice: string
+  ): Promise<{ status: string; video_path: string; facts: ExtractedFact[] }> => {
+    const res = await fetch(`${BASE_URL}/api/jobs/run-e2e`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lang, character, voice }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
   // 7. Registered presenters and the gestures each can perform.
   // An empty array is normal — it means no presenter is installed and the
   // compositor renders its full-width layout instead.

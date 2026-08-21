@@ -6,7 +6,6 @@ import {
   Download,
   Loader2,
   UserSquare2,
-  Hand,
   FileText,
   Copy,
   Check,
@@ -15,12 +14,6 @@ import {
 } from 'lucide-react';
 import type { AvatarInfo, NoticeVideoJob } from '../api/client';
 import { api } from '../api/client';
-
-const GESTURE_ROLE_HINT: Record<string, string> = {
-  neutral: 'resting pose',
-  present: 'on core facts',
-  stress: 'on deadline scenes',
-};
 
 const SOURCE_HINT: Record<string, string> = {
   synthetic: 'Synthetic — no real person depicted',

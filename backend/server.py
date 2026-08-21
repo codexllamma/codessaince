@@ -54,6 +54,13 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/avatars", StaticFiles(directory="assets/avatars"), name="avatars")
 
+# run_pipeline writes finished videos to out/, which nothing served. The
+# /api/jobs/run-e2e response hands the browser that path, so without this
+# mount the citizen-facing flow renders a video successfully and then has no
+# way to play it.
+Path("out").mkdir(parents=True, exist_ok=True)
+app.mount("/out", StaticFiles(directory="out"), name="out")
+
 
 def save_job(job: NoticeVideoJob) -> None:
   job_file = JOBS_DIR / f"{job.job_id}.json"
