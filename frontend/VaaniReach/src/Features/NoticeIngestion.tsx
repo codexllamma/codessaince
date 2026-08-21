@@ -7,6 +7,7 @@ export interface IngestConfig {
   targetLangs: string[];
   voiceId: string;
   speedMod: string;
+  primaryLang?: string;
 }
 
 interface Props {
@@ -25,10 +26,18 @@ const ALL_LANGUAGES = [
 ];
 
 const VOICES = [
-  { id: 'en-IN-PrabhatNeural', label: 'Prabhat (Indian English - Male Neural)' },
-  { id: 'en-IN-NeerjaNeural', label: 'Neerja (Indian English - Female Neural)' },
-  { id: 'hi-IN-MadhurNeural', label: 'Madhur (Hindi - Male Clear Broadcast)' },
-  { id: 'hi-IN-SwaraNeural', label: 'Swara (Hindi - Female Broadcast)' },
+  { id: 'en-IN-PrabhatNeural', label: 'Prabhat (Indian English - Male)' },
+  { id: 'en-IN-NeerjaNeural', label: 'Neerja (Indian English - Female)' },
+  { id: 'hi-IN-MadhurNeural', label: 'Madhur (Hindi - Male)' },
+  { id: 'hi-IN-SwaraNeural', label: 'Swara (Hindi - Female)' },
+  { id: 'ta-IN-ValluvarNeural', label: 'Valluvar (Tamil - Male)' },
+  { id: 'ta-IN-PallaviNeural', label: 'Pallavi (Tamil - Female)' },
+  { id: 'te-IN-MohanNeural', label: 'Mohan (Telugu - Male)' },
+  { id: 'te-IN-ShrutiNeural', label: 'Shruti (Telugu - Female)' },
+  { id: 'mr-IN-ManoharNeural', label: 'Manohar (Marathi - Male)' },
+  { id: 'mr-IN-AarohiNeural', label: 'Aarohi (Marathi - Female)' },
+  { id: 'bn-IN-BashkarNeural', label: 'Bashkar (Bengali - Male)' },
+  { id: 'bn-IN-TanishaaNeural', label: 'Tanishaa (Bengali - Female)' },
 ];
 
 export const NoticeIngestion: React.FC<Props> = ({
@@ -51,7 +60,7 @@ export const NoticeIngestion: React.FC<Props> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!config.rawText.trim()) return;
+    if (!config.rawText.trim() && !config.primaryLang) return;
     onSubmit(config);
   };
 
@@ -73,25 +82,43 @@ export const NoticeIngestion: React.FC<Props> = ({
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Notice Raw Text */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-cyan-400" /> Official Circular / Gazette Text
-            </label>
-            <span className="text-xs text-slate-500 font-mono">
-              {config.rawText.length} characters
-            </span>
+        {/* Source PDF Selection (Local) */}
+        <div className="space-y-3">
+          <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-cyan-400" /> Source Circular PDF (Local)
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {ALL_LANGUAGES.map((lang) => {
+              const isSelected = config.primaryLang === lang.code;
+              return (
+                <button
+                  key={`source-${lang.code}`}
+                  type="button"
+                  onClick={() => setConfig({ ...config, primaryLang: lang.code, rawText: 'AUTO_GENERATED' })}
+                  className={`p-3.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                    isSelected
+                      ? 'bg-amber-950/40 border-amber-500/50 shadow-md shadow-amber-950/40 text-white'
+                      : 'bg-slate-900/40 border-white/10 text-slate-400 hover:border-white/20'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{lang.flag}</span>
+                      <span className="text-sm font-semibold">{lang.label}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                      extensive_test_{lang.code}.pdf
+                    </span>
+                  </div>
+                  <div
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                      isSelected ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 border border-slate-600'
+                    }`}
+                  />
+                </button>
+              );
+            })}
           </div>
-
-          <textarea
-            rows={5}
-            required
-            value={config.rawText}
-            onChange={(e) => setConfig({ ...config, rawText: e.target.value })}
-            placeholder="Paste official notification text here (e.g., Ministry of Agriculture: PM-KISAN 17th installment of Rs 2000. Complete verification before 31-10-2026)..."
-            className="w-full bg-[#090E1A]/80 border border-white/15 focus:border-cyan-400 rounded-xl p-4 text-slate-100 text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all font-sans leading-relaxed resize-y"
-          />
         </div>
 
         {/* Target Languages Multi-select */}
@@ -184,7 +211,7 @@ export const NoticeIngestion: React.FC<Props> = ({
         {/* Submit Action Button */}
         <button
           type="submit"
-          disabled={loading || !config.rawText.trim()}
+          disabled={loading || (!config.rawText.trim() && !config.primaryLang)}
           className="btn-primary w-full py-3.5 text-base"
         >
           {loading ? (

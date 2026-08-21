@@ -74,7 +74,7 @@ def load_job(job_id: str) -> NoticeVideoJob:
 
 
 class CreateJobRequest(BaseModel):
-  raw_extracted_text: str
+  raw_extracted_text: Optional[str] = None
   source_file_name: str = "notice.pdf"
   target_languages: List[Literal["en", "hi", "ta", "te", "bn", "mr"]] = [
       "en",
@@ -83,6 +83,7 @@ class CreateJobRequest(BaseModel):
   ]
   selected_voice_id: str = "hi-IN-MadhurNeural"
   voice_speed_modifier: str = "+0%"
+  primary_lang: Optional[str] = None
 
 
 class UpdateFactsRequest(BaseModel):
@@ -113,10 +114,26 @@ def create_job(payload: CreateJobRequest):
   existing_jobs = list(JOBS_DIR.glob("job_*.json"))
   job_id = f"job_{len(existing_jobs) + 1:03d}"
 
+  raw_text = payload.raw_extracted_text or ""
+  if payload.primary_lang:
+      from ocr_engine.executor import run_ephemeral_ocr
+      pdf_path = Path("ocr_engine") / f"extensive_test_{payload.primary_lang}.pdf"
+      if not pdf_path.exists():
+          pdf_path = Path("ocr_engine") / "complex_layout_test.pdf"
+      
+      try:
+          ocr_result = run_ephemeral_ocr(str(pdf_path), lang=payload.primary_lang)
+          raw_text = ocr_result.get("raw_text", "")
+      except Exception as e:
+          raise HTTPException(
+              status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+              detail=f"Failed to process local PDF for language {payload.primary_lang}: {e}"
+          )
+
   job = NoticeVideoJob(
       job_id=job_id,
       source_file_name=payload.source_file_name,
-      raw_extracted_text=payload.raw_extracted_text,
+      raw_extracted_text=raw_text,
       target_languages=payload.target_languages,
       selected_voice_id=payload.selected_voice_id,
       voice_speed_modifier=payload.voice_speed_modifier,

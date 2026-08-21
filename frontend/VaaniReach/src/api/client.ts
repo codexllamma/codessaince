@@ -126,7 +126,8 @@ export const api = {
     sourceFileName: string = 'notice.pdf',
     targetLangs: string[] = ['en', 'hi'],
     voiceId: string = 'en-IN-PrabhatNeural',
-    speedMod: string = '+0%'
+    speedMod: string = '+0%',
+    primaryLang?: string
   ): Promise<NoticeVideoJob> => {
     const res = await fetch(`${BASE_URL}/api/jobs`, {
       method: 'POST',
@@ -137,6 +138,7 @@ export const api = {
         target_languages: targetLangs,
         selected_voice_id: voiceId,
         voice_speed_modifier: speedMod,
+        primary_lang: primaryLang,
       }),
     });
     if (!res.ok) throw new Error(await res.text());

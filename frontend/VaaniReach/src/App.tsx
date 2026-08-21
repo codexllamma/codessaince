@@ -77,7 +77,8 @@ export const App: React.FC = () => {
         config.sourceFileName,
         config.targetLangs,
         config.voiceId,
-        config.speedMod
+        config.speedMod,
+        config.primaryLang
       );
 
       // 2. Extract Facts
