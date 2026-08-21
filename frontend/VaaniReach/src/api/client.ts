@@ -109,6 +109,14 @@ export interface NoticeVideoJob {
   final_srt_paths?: Record<string, string>;
 }
 
+export interface UploadDocResult {
+  status: string;
+  extracted_facts: ExtractedFact[];
+  results: ExtractedFact[];
+  raw_text: string;
+  pages_processed: number;
+}
+
 export const api = {
   // Check Backend Health
   checkHealth: async (): Promise<boolean> => {
@@ -118,6 +126,22 @@ export const api = {
     } catch {
       return false;
     }
+  },
+
+  // Upload a circular PDF: streams it to the backend, which runs OCR (in an
+  // isolated subprocess) and grounded fact extraction in one call. This is
+  // the entry point for the "user picks a file" flow, upstream of createJob
+  // — the raw text it returns is what createJob takes as input.
+  uploadDocument: async (file: File, lang: string = 'en'): Promise<UploadDocResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('lang', lang);
+    const res = await fetch(`${BASE_URL}/api/jobs/upload-doc`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
   },
 
   // 1. Initialize Job
