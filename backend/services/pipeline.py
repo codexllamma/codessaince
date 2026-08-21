@@ -169,7 +169,8 @@ def run_pipeline(
   # ----------------------------------------------------------- 5. anchor loop
   _banner("5/7", "Ping-pong anchor loop")
   if avatar_id:
-    avatar = avatar_registry._registry.get(avatar_id)
+    registry = avatar_registry.load_registry()
+    avatar = next((a for a in registry if a.avatar_id == avatar_id), None)
   else:
     avatar = avatar_registry.resolve(lang)
   if avatar is None:

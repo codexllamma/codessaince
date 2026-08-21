@@ -779,7 +779,8 @@ def resolve_presenter(
     # staring without blinking for the whole video, which reads as broken even
     # when the lip-sync itself is correct.
     if avatar_id:
-        registered = avatar_registry._registry.get(avatar_id)
+        registry = avatar_registry.load_registry()
+        registered = next((a for a in registry if a.avatar_id == avatar_id), None)
     else:
         registered = avatar_registry.resolve(lang)
 
