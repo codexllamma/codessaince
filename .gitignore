@@ -71,3 +71,13 @@ desktop.ini
 # uses -- keep the originals local rather than redistributing them.
 /*.mp4
 backend/*.mp4
+
+# Generated Assets
+backend/static/audio/*
+!backend/static/audio/.gitkeep
+backend/static/videos/*
+!backend/static/videos/.gitkeep
+backend/static/avatars/*
+!backend/static/avatars/.gitkeep
+*.log
+
