@@ -2,9 +2,14 @@ import os
 import sys
 import json
 import argparse
+from pathlib import Path
 import numpy as np
 import fitz  # PyMuPDF
 import logging
+
+# Force UTF-8 encoding for standard streams to prevent charmap errors on Windows
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 # Suppress internal warnings
 logging.getLogger("ppocr").setLevel(logging.ERROR)

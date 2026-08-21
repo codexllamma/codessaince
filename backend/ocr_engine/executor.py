@@ -52,7 +52,8 @@ def run_ephemeral_ocr(
     process = subprocess.run(
         cmd,
         capture_output=True,
-        text=True
+        text=True,
+        encoding="utf-8"
     )
 
     # If GPU failed, gracefully retry on CPU
@@ -64,6 +65,7 @@ def run_ephemeral_ocr(
             cmd_cpu,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=env_cpu
         )
 
