@@ -369,7 +369,7 @@ def approve_job(job_id: str, payload: ApproveJobRequest):
 
 
 @app.post("/api/jobs/{job_id}/render", response_model=NoticeVideoJob)
-def render_video(job_id: str, lang: Optional[str] = None):
+def render_video(job_id: str, lang: Optional[str] = None, avatar_id: Optional[str] = None):
   job = load_job(job_id)
 
   if not job.officer_approved:
@@ -394,7 +394,7 @@ def render_video(job_id: str, lang: Optional[str] = None):
 
     for l in langs_to_render:
       if l == "en" or l in job.localized_scenes:
-        video_url = render_notice_video(job, lang=l)
+        video_url = render_notice_video(job, lang=l, avatar_id=avatar_id)
         job.final_video_paths[l] = video_url
         job.final_srt_paths[l] = f"/static/videos/{job.job_id}_final_{l}.srt"
 

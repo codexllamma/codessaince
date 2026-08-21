@@ -171,12 +171,12 @@ export const App: React.FC = () => {
   };
 
   // Step 5: Render Video Broadcast
-  const handleRenderVideo = async () => {
+  const handleRenderVideo = async (avatarId?: string) => {
     if (!job) return;
     setRendering(true);
     setErrorMsg(null);
     try {
-      const updatedJob = await api.renderVideo(job.job_id);
+      const updatedJob = await api.renderVideo(job.job_id, undefined, avatarId);
       setJob(updatedJob);
       setSuccessMsg('All multilingual video broadcasts rendered successfully!');
     } catch (err: any) {

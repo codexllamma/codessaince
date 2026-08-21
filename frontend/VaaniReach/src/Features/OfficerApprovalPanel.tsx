@@ -31,7 +31,7 @@ const SOURCE_HINT: Record<string, string> = {
 interface Props {
   job: NoticeVideoJob;
   onApproveJob: (notes?: string) => Promise<void>;
-  onRenderVideo: () => Promise<void>;
+  onRenderVideo: (avatarId?: string) => Promise<void>;
   loading: boolean;
   rendering: boolean;
 }
@@ -87,13 +87,22 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
   // exactly what the mandatory disclosure label exists to prevent.
   const [avatars, setAvatars] = useState<AvatarInfo[] | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string>('');
 
   useEffect(() => {
     let cancelled = false;
     api
       .listAvatars()
       .then((list) => {
-        if (!cancelled) setAvatars(list);
+        if (!cancelled) {
+          setAvatars(list);
+          const jobPresenters = list.filter((a) =>
+            job.target_languages.some((l) => a.languages.includes(l) || a.languages.includes('*'))
+          );
+          if (jobPresenters.length > 0) {
+            setSelectedAvatarId(jobPresenters[0].avatar_id);
+          }
+        }
       })
       .catch((err) => {
         if (!cancelled) setAvatarError(err instanceof Error ? err.message : String(err));
@@ -182,41 +191,58 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {presentersForJob.map((a) => (
-              <div key={a.avatar_id} className="border border-white/10 rounded-xl p-4 space-y-3 bg-black/30">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-white">{a.display_name}</span>
-                  <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30">
-                    {a.languages.join(', ')}
-                  </span>
-                </div>
+              <div 
+                key={a.avatar_id} 
+                onClick={() => !isApproved && setSelectedAvatarId(a.avatar_id)}
+                className={`relative overflow-hidden border rounded-xl p-4 space-y-3 transition-all cursor-pointer ${
+                  selectedAvatarId === a.avatar_id 
+                    ? 'border-amber-500 bg-amber-500/10 shadow-[0_0_15px_rgba(245,158,11,0.15)]' 
+                    : 'border-white/10 bg-black/30 hover:border-slate-600'
+                } ${isApproved ? 'pointer-events-none' : ''}`}
+              >
+                <div className="flex gap-4">
+                  {/* Avatar Image Thumbnail */}
+                  <div className="w-20 h-24 shrink-0 bg-slate-900 rounded-lg overflow-hidden border border-white/10">
+                    <img 
+                      src={`http://localhost:8000/avatars/${a.avatar_id}.png`} 
+                      alt={a.display_name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  </div>
 
-                <div className="text-xs text-amber-300 font-mono bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1.5">
-                  {a.disclosure_label}
-                </div>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className={`font-semibold ${selectedAvatarId === a.avatar_id ? 'text-amber-400' : 'text-white'}`}>
+                        {a.display_name}
+                      </span>
+                      <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/30">
+                        {a.languages.join(', ')}
+                      </span>
+                    </div>
 
-                <div className="text-xs text-slate-400">
-                  {SOURCE_HINT[a.source] || a.source}
+                    <div className="text-[10px] text-amber-300 font-mono bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1 leading-tight">
+                      {a.disclosure_label}
+                    </div>
+
+                    <div className="text-xs text-slate-400">
+                      {SOURCE_HINT[a.source] || a.source}
+                    </div>
+                  </div>
                 </div>
 
                 {a.licence.startsWith('UNCONFIRMED') && (
                   <div className="text-xs text-rose-300 border border-rose-500/30 bg-rose-500/10 rounded px-2 py-1.5">
-                    Licence unconfirmed — resolve before public dispatch.
+                    Licence unconfirmed - resolve before public dispatch.
                   </div>
                 )}
 
-                <div className="flex items-start gap-2 text-xs text-slate-400">
-                  <Hand className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                  {a.gestures.length > 0 ? (
-                    <span>
-                      {a.gestures.length} gestures, timed to the narration:{' '}
-                      {a.gestures
-                        .map((g) => `${g.name} (${GESTURE_ROLE_HINT[g.role] || g.role})`)
-                        .join(', ')}
-                    </span>
-                  ) : (
-                    <span>No gesture mapping — the clip loops unchanged.</span>
-                  )}
-                </div>
+                {/* Selection Indicator */}
+                {selectedAvatarId === a.avatar_id && (
+                  <div className="absolute top-3 right-3 bg-amber-500 text-slate-900 rounded-full p-1 shadow-md">
+                    <Check className="w-3 h-3" />
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -376,9 +402,9 @@ export const OfficerApprovalPanel: React.FC<Props> = ({
 
           <button
             type="button"
-            disabled={rendering}
-            onClick={onRenderVideo}
-            className="btn-primary py-3.5 px-8 text-sm shadow-lg shadow-cyan-500/30"
+            disabled={rendering || !selectedAvatarId}
+            onClick={() => onRenderVideo(selectedAvatarId)}
+            className="btn-primary py-3.5 px-8 text-sm shadow-lg shadow-cyan-500/30 disabled:opacity-50"
           >
             {rendering ? (
               <>

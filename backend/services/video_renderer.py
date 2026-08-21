@@ -44,7 +44,7 @@ def render_scene_card_image(scene: SceneDefinition, lang: str = "en") -> np.ndar
   return np.asarray(frame.convert("RGB"))
 
 
-def render_notice_video(job: NoticeVideoJob, lang: str = "en") -> str:
+def render_notice_video(job: NoticeVideoJob, lang: str = "en", avatar_id: Optional[str] = None) -> str:
   """Render every scene for `lang` into a single MP4 and export its external SRT file."""
   scenes = (
       job.master_scenes_en if lang == "en" else job.localized_scenes.get(lang, [])
@@ -57,7 +57,7 @@ def render_notice_video(job: NoticeVideoJob, lang: str = "en") -> str:
   output_path = OUTPUT_DIR / output_filename
 
   # 1. Render final MP4
-  layers.render_job(scenes, lang, str(output_path))
+  layers.render_job(scenes, lang, str(output_path), avatar_id=avatar_id)
 
   # 2. Generate external broadcast SRT file
   srt_filename = f"{job.job_id}_final_{lang}.srt"

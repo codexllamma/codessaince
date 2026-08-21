@@ -763,13 +763,13 @@ def resolve_presenter(
     canvas_size: Tuple[int, int],
     scene: Optional[SceneDefinition] = None,
     use_wav2lip: bool = True,
+    avatar_id: Optional[str] = None,
 ):
     """(PresenterSource, PresenterLayout) for `lang`, with dynamic Wav2Lip-HD lip-sync and fallback."""
     from services import avatar_registry
 
     H = canvas_size[1]
     caption_reserve = int(H * karaoke.BOTTOM_SAFE_PCT)
-    layout = presenter.compute_layout(canvas_size, caption_reserve)
 
     # 1. Dynamic Wav2Lip Lip-Sync Synthesis
     #
@@ -778,7 +778,17 @@ def resolve_presenter(
     # mouth is replaced. Animating a photograph instead leaves the presenter
     # staring without blinking for the whole video, which reads as broken even
     # when the lip-sync itself is correct.
-    registered = avatar_registry.resolve(lang)
+    if avatar_id:
+        registered = avatar_registry._registry.get(avatar_id)
+    else:
+        registered = avatar_registry.resolve(lang)
+
+    layout = presenter.PresenterLayout(
+        padding_px=int(H * 0.05),
+        bottom_limit=H - caption_reserve,
+        H=H,
+    )
+
     if use_wav2lip and scene is not None and scene.audio_path and registered is not None:
         audio_file = resolve_audio_path(scene.audio_path)
         if audio_file is not None and Path(registered.file_path).is_file():
@@ -791,11 +801,12 @@ def resolve_presenter(
 
                 if not lip_sync_mp4.exists() or lip_sync_mp4.stat().st_size < 1000:
                     generate_lip_sync_video(
-                        face_video_path=registered.file_path,
-                        audio_path=audio_file,
-                        output_path=lip_sync_mp4,
+                        audio_path=str(audio_file),
+                        face_video_path=str(registered.file_path),
+                        out_path=str(lip_sync_mp4),
+                        codec_pref="h264_nvenc",
                     )
-
+                
                 source = presenter.PresenterSource.load(
                     str(lip_sync_mp4), layout, registered.disclosure_label, lang
                 )
@@ -812,7 +823,7 @@ def resolve_presenter(
                 )
 
     # 2. Pre-baked / Registered Avatar Loop Fallback
-    avatar = avatar_registry.resolve(lang)
+    avatar = registered
     if avatar is None:
         return None, None
 
@@ -839,8 +850,25 @@ def render_scene_clip(
     presenter_layout=None,
     presenter_offset_sec: float = 0.0,
     attach_audio: bool = True,
+    avatar_id: Optional[str] = None,
 ):
     from moviepy import AudioFileClip, VideoClip
+
+    H = canvas_size[1]
+
+    # Use explicitly passed layout, or compute if absent
+    if presenter_layout is None:
+        caption_reserve = int(H * karaoke.BOTTOM_SAFE_PCT)
+        presenter_layout = presenter.PresenterLayout(
+            padding_px=int(H * 0.05),
+            bottom_limit=H - caption_reserve,
+            H=H,
+        )
+
+    # Resolve presenter
+    p_source = presenter_source
+    if p_source is None:
+        p_source, _ = resolve_presenter(lang, canvas_size, scene=scene, avatar_id=avatar_id)
 
     if scene.scene_duration_sec is None or scene.subtitles is None:
         raise ValueError(f"scene {scene.scene_id} is missing synthesized duration/subtitles (mixed state, see README §7.4 invariant 1)")
@@ -946,6 +974,7 @@ def render_job(
     canvas_size: Tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT),
     presenter_source=None,
     narration_wav: Optional[str] = None,
+    avatar_id: Optional[str] = None,
 ) -> str:
     """Render `scenes` to `out_path`.
 
@@ -972,7 +1001,9 @@ def render_job(
     print(f"[RENDER JOB TARGET] Output Path: {out_path}", flush=True)
     print(f"=======================================================", flush=True)
 
-    _, presenter_layout = resolve_presenter(lang, canvas_size, use_wav2lip=not continuous)
+    _, presenter_layout = resolve_presenter(
+        lang, canvas_size, use_wav2lip=not continuous, avatar_id=avatar_id
+    )
 
     clips = []
     offset = 0.0

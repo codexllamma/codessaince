@@ -205,8 +205,12 @@ export const api = {
   },
 
   // 6. Render Video Broadcast
-  renderVideo: async (jobId: string, lang?: string): Promise<NoticeVideoJob> => {
-    const url = lang ? `${BASE_URL}/api/jobs/${jobId}/render?lang=${lang}` : `${BASE_URL}/api/jobs/${jobId}/render`;
+  renderVideo: async (jobId: string, lang?: string, avatarId?: string): Promise<NoticeVideoJob> => {
+    const params = new URLSearchParams();
+    if (lang) params.append('lang', lang);
+    if (avatarId) params.append('avatar_id', avatarId);
+    
+    const url = `${BASE_URL}/api/jobs/${jobId}/render${params.toString() ? '?' + params.toString() : ''}`;
     const res = await fetch(url, { method: 'POST' });
     if (!res.ok) throw new Error(await res.text());
     return res.json();
