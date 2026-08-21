@@ -2,8 +2,8 @@ import subprocess
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-input_video = str(BASE_DIR / "assets" / "avatars" / "male_raw.mp4")
-output_video = str(BASE_DIR / "assets" / "avatars" / "indic_official_m01.mp4")
+input_video = str(BASE_DIR / "assets" / "avatars" / "male_punjabi_raw.mp4")
+output_video = str(BASE_DIR / "assets" / "avatars" / "indic_official_m02.mp4")
 
 print(f"Reading: {input_video}")
 print("Creating seamless ping-pong loop for the male anchor...")

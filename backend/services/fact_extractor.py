@@ -267,7 +267,7 @@ def extract_facts_from_text(raw_text: str) -> List[ExtractedFact]:
 import json
 import requests
 
-def try_ollama_extraction(raw_text: str) -> List[ExtractedFact]:
+def try_ollama_extraction(raw_text: str, source_lang: str = "en") -> List[ExtractedFact]:
     """Attempts to extract facts using local Ollama model."""
     OLLAMA_URL = "http://localhost:11434/api/generate"
     OLLAMA_MODEL = "llama3.2:3b"
@@ -275,11 +275,12 @@ def try_ollama_extraction(raw_text: str) -> List[ExtractedFact]:
     prompt = f"""
     You are an expert data extractor. Extract ALL relevant information and key details from the following government notice text.
     Be EXTENSIVE and thorough. Do not limit the number of facts; extract every single entity you can find.
+    The provided text is in the {source_lang} language. You must read it, extract the requested facts, and TRANSLATE all 'raw_value' and 'normalized_value' outputs into ENGLISH. The final JSON output MUST be entirely in English.
     Return ONLY a valid JSON array of objects. Do not include markdown formatting or explanations.
     Each object must have exactly these keys:
     "category": string (must be exactly one of: AUTHORITY, SCHEME_NAME, AMOUNT, DEADLINE, ACTION_REQUIRED, ELIGIBILITY, BENEFICIARY)
-    "raw_value": string (exact substring from the text, character for character)
-    "normalized_value": string (a clean, readable version of the fact)
+    "raw_value": string (translated to English)
+    "normalized_value": string (a clean, readable version of the fact in English)
     
     Notice Text:
     {raw_text}
@@ -348,13 +349,13 @@ def try_ollama_extraction(raw_text: str) -> List[ExtractedFact]:
 class FactExtractor:
     """Grounded entity extraction and fact normalization interface."""
 
-    def extract_facts(self, raw_text: str) -> List[ExtractedFact]:
+    def extract_facts(self, raw_text: str, source_lang: str = "en") -> List[ExtractedFact]:
         """Extracts facts from raw extracted notice text using local LLM or fallback."""
         if not raw_text or not raw_text.strip():
             return []
             
         print("Attempting fact extraction with local Ollama LLM (llama3.2:3b)...")
-        llm_facts = try_ollama_extraction(raw_text)
+        llm_facts = try_ollama_extraction(raw_text, source_lang)
         
         if llm_facts and len(llm_facts) > 0:
             print(f"Successfully extracted {len(llm_facts)} facts using local LLM.")

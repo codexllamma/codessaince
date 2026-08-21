@@ -10,10 +10,9 @@ SUPPORTED_LANGUAGES = {
     "te": "te",       # Telugu
     "mr": "mr",       # Marathi
     "bn": "bn",       # Bengali
-    "es": "latin",    # Spanish
-    "fr": "latin",    # French
-    "de": "latin",    # German
-    "ch": "ch",       # Chinese Simplified
+    "gu": "gu",       # Gujarati
+    "kn": "kn",       # Kannada
+    "ml": "ml",       # Malayalam
 }
 
 DEFAULT_CONFIG = {
