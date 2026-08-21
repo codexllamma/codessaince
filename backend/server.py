@@ -52,6 +52,7 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/avatars", StaticFiles(directory="assets/avatars"), name="avatars")
 
 
 def save_job(job: NoticeVideoJob) -> None:
