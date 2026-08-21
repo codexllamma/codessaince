@@ -18,20 +18,16 @@ logging.getLogger("ppocr").setLevel(logging.ERROR)
 os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+from paddleocr import PaddleOCR
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Ephemeral PaddleOCR Worker")
     parser.add_argument("--pdf_path", required=True, type=str, help="Path to input PDF file")
     parser.add_argument("--lang", default="en", type=str, help="Language code")
     parser.add_argument("--dpi", default=300, type=int, help="Render DPI")
-    parser.add_argument("--use_gpu", action="store_true", default=False, help="Enable GPU acceleration")
+    parser.add_argument("--use_gpu", action="store_true", default=True, help="Enable GPU acceleration")
     parser.add_argument("--min_conf", default=0.5, type=float, help="Minimum confidence threshold")
     return parser.parse_args()
-
-# To avoid parsing args twice, we'll just check sys.argv directly for --use_gpu
-if "--use_gpu" not in sys.argv:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
-from paddleocr import PaddleOCR
 
 def _build_ocr(lang: str, use_gpu: bool):
     """PaddleOCR across the 2.x/3.x API break.
@@ -139,61 +135,32 @@ def extract_pdf(pdf_path: str, lang: str, dpi: int, use_gpu: bool, min_conf: flo
     extracted_pages = []
 
     for page_idx, page in enumerate(doc):
-        text_dict = page.get_text("dict")
-        page_blocks = []
+        # Direct rasterization to raw RGB byte buffer
+        pix = page.get_pixmap(matrix=mat, alpha=False)
         
-        # Check if the page has embedded text
-        extracted_chars = 0
-        for block in text_dict.get("blocks", []):
-            if block.get("type") == 0:  # text block
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        extracted_chars += len(span.get("text", "").strip())
-        
-        if extracted_chars > 40:
-            # Use embedded text
-            for block in text_dict.get("blocks", []):
-                if block.get("type") == 0:
-                    for line in block.get("lines", []):
-                        for span in line.get("spans", []):
-                            text = span.get("text", "").strip()
-                            if text:
-                                bbox = span.get("bbox")
-                                page_blocks.append({
-                                    "text": text,
-                                    "confidence": 1.0,
-                                    "bounding_box": [[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]]],
-                                    "top": bbox[1],
-                                    "left": bbox[0]
-                                })
-        else:
-            # Fallback to OCR
-            # Direct rasterization to raw RGB byte buffer
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            
-            # Fast zero-copy / buffer conversion to NumPy array
-            img_np = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3).copy()
-            img_np = img_np[:, :, ::-1] # Convert RGB to BGR for PaddleOCR
+        # Fast zero-copy / buffer conversion to NumPy array
+        img_np = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
 
-            # Run inference with dynamic fallback
-            try:
+        # Run inference with dynamic fallback
+        try:
+            result = _run(ocr, img_np)
+        except Exception as ocr_err:
+            if use_gpu:
+                ocr = _build_ocr(lang, False)
+                use_gpu = False
                 result = _run(ocr, img_np)
-            except Exception as ocr_err:
-                if use_gpu:
-                    ocr = _build_ocr(lang, False)
-                    use_gpu = False
-                    result = _run(ocr, img_np)
-                else:
-                    raise ocr_err
+            else:
+                raise ocr_err
 
-            for text, conf, box in _normalize(result, min_conf):
-                page_blocks.append({
-                    "text": text,
-                    "confidence": round(conf, 4),
-                    "bounding_box": box,
-                    "top": box[0][1],
-                    "left": box[0][0]
-                })
+        page_blocks = []
+        for text, conf, box in _normalize(result, min_conf):
+            page_blocks.append({
+                "text": text,
+                "confidence": round(conf, 4),
+                "bounding_box": box,
+                "top": box[0][1],
+                "left": box[0][0]
+            })
 
         # Natural reading order sort: primary = Top (Y), secondary = Left (X)
         # Grouping by roughly similar Y (within 10px) ensures multi-column stability

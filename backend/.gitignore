@@ -99,8 +99,3 @@ logs/
 # sidecars in assets/broll/library/, and the embeddings are derived data --
 # rebuild it rather than syncing a binary store between machines.
 data/chroma/
-
-# GPU OCR experiment (experiment/gpu-ocr branch): cuDNN redistributable
-# extracted from conda-forge, ~1.2GB. Not our code, not something to commit --
-# scripts/setup_gpu_ocr.py (once written) re-fetches it.
-vendor/cudnn8/

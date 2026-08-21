@@ -1,11 +1,6 @@
 import os
-import sys
 import time
 import json
-
-sys.stdout.reconfigure(encoding='utf-8')
-sys.stderr.reconfigure(encoding='utf-8')
-
 from executor import run_ephemeral_ocr # Assuming executor.py is in the same directory
 from generate_mock_pdf import create_complex_pdf
 
