@@ -37,31 +37,40 @@
   },
   "avatars": [
     {
-      "avatar_id": "anchor_male",
-      "file": "anchor_male.mp4",
-      "languages": [
-        "en",
-        "*"
-      ],
-      "display_name": "Anchor Male",
+      "avatar_id": "male_raw",
+      "file": "male_raw.mp4",
+      "languages": ["*"],
+      "display_name": "Male Raw",
       "source": "synthetic",
-      "licence": "AI-generated news anchor (KingAI 3.0 watermark in source, removed by the panel centre-crop); no real person depicted. Supplied by teammate as male_raw.mp4.",
-      "disclosure_label": "AI-GENERATED PRESENTER - NOT A GOVERNMENT OFFICIAL"
+      "licence": "AI-generated character",
+      "disclosure_label": "AI-GENERATED PRESENTER"
     },
     {
-      "avatar_id": "anchor_f01",
-      "file": "anchor_f01.mp4",
-      "languages": [
-        "hi",
-        "mr",
-        "ta",
-        "te",
-        "bn"
-      ],
-      "display_name": "Anchor F01",
+      "avatar_id": "female_raw",
+      "file": "female_raw.mp4",
+      "languages": ["*"],
+      "display_name": "Female Raw",
       "source": "synthetic",
-      "licence": "AI-generated news anchor (KingAI 3.0 watermark visible bottom-right); no real person depicted. Provenance supplied by teammate in commit 1770f99 - confirm generator terms before any non-demo use.",
-      "disclosure_label": "AI-GENERATED PRESENTER - NOT A GOVERNMENT OFFICIAL"
+      "licence": "AI-generated character",
+      "disclosure_label": "AI-GENERATED PRESENTER"
+    },
+    {
+      "avatar_id": "male_punjabi_raw",
+      "file": "male_punjabi_raw.mp4",
+      "languages": ["*"],
+      "display_name": "Punjabi Male Raw",
+      "source": "synthetic",
+      "licence": "AI-generated character",
+      "disclosure_label": "AI-GENERATED PRESENTER"
+    },
+    {
+      "avatar_id": "female_saree_raw",
+      "file": "female_saree_raw.mp4",
+      "languages": ["*"],
+      "display_name": "Saree Female Raw",
+      "source": "synthetic",
+      "licence": "AI-generated character",
+      "disclosure_label": "AI-GENERATED PRESENTER"
     }
   ]
 }

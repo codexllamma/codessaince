@@ -29,7 +29,7 @@ def _process_pdf_sync(temp_pdf_path: str, lang: str) -> Dict[str, Any]:
     pages = ocr_result.get("pages", [])
 
     extractor = FactExtractor()
-    facts = extractor.extract_facts(raw_text)
+    facts = extractor.extract_facts(raw_text, source_lang=lang)
     facts_data = [f.model_dump() for f in facts]
 
     return {
@@ -84,3 +84,50 @@ async def upload_document(
             except OSError:
                 pass
         await file.close()
+
+from pydantic import BaseModel
+
+class RunE2ERequest(BaseModel):
+    lang: str
+    character: str
+    voice: str
+
+def _run_e2e_sync(req: RunE2ERequest) -> dict:
+    from ocr_engine.executor import run_ephemeral_ocr
+    from services.fact_extractor import FactExtractor
+    from services.pipeline import run_pipeline
+    import time
+    
+    pdf_path = Path(__file__).resolve().parent.parent.parent / "ocr_engine" / f"extensive_test_{req.lang}.pdf"
+    if not pdf_path.exists():
+        pdf_path = Path(__file__).resolve().parent.parent.parent / "ocr_engine" / "extensive_test_en.pdf"
+        
+    ocr_result = run_ephemeral_ocr(str(pdf_path), lang=req.lang)
+    raw_text = ocr_result.get("raw_text", "")
+    
+    extractor = FactExtractor()
+    facts = extractor.extract_facts(raw_text, source_lang=req.lang)
+    
+    job_id = f"e2e_{int(time.time())}"
+    pipeline_result = run_pipeline(
+        raw_text=raw_text,
+        job_id=job_id,
+        lang=req.lang,
+        use_lipsync=True,
+        facts=facts,
+        avatar_id=req.character,
+        voice_id=req.voice
+    )
+    
+    return {
+        "status": "success",
+        "video_path": str(pipeline_result.video_path),
+        "facts": [f.model_dump() for f in facts]
+    }
+
+@router.post("/api/jobs/run-e2e", status_code=status.HTTP_200_OK)
+async def run_e2e_pipeline(req: RunE2ERequest):
+    """Runs the entire pipeline end-to-end based on a selected language, character, and voice."""
+    result = await run_in_threadpool(_run_e2e_sync, req)
+    return result
+

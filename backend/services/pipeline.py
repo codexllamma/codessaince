@@ -70,6 +70,7 @@ def run_pipeline(
     voice_id: Optional[str] = None,
     rate: str = "+0%",
     facts: Optional[List[ExtractedFact]] = None,
+    avatar_id: Optional[str] = None,
 ) -> PipelineResult:
   """Run notice text all the way to a rendered MP4."""
   from compositor import layers, presenter as presenter_mod
@@ -167,9 +168,12 @@ def run_pipeline(
 
   # ----------------------------------------------------------- 5. anchor loop
   _banner("5/7", "Ping-pong anchor loop")
-  avatar = avatar_registry.resolve(lang)
+  if avatar_id:
+    avatar = avatar_registry._registry.get(avatar_id)
+  else:
+    avatar = avatar_registry.resolve(lang)
   if avatar is None:
-    raise RuntimeError(f"no avatar registered for lang={lang!r}")
+    raise RuntimeError(f"no avatar registered or found for lang={lang!r}, avatar_id={avatar_id!r}")
   logger.info("avatar %r -> %s", avatar.avatar_id, avatar.file_path.name)
   logger.info("disclosure: %s", avatar.disclosure_label)
 
