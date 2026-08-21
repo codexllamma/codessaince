@@ -1,0 +1,5 @@
+{
+  "plugins": [
+    ".agents/plugins/vaanireach"
+  ]
+}

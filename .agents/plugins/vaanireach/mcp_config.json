@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vaanireach-pipeline": {
+      "command": "C:/Shivam/Code/codessaince/backend/.venv/Scripts/python.exe",
+      "args": ["C:/Shivam/Code/codessaince/backend/mcp_server.py"]
+    }
+  }
+}
