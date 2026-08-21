@@ -954,6 +954,29 @@ Reading stdout and stderr concurrently matters. Draining only stdout while the c
 
 ## 10. Asset Manifest and Tag Matching
 
+> **Superseded in part.** Tag matching as described below is now the *third*
+> of four selection layers, not the first. Scene backgrounds are chosen by
+> retrieval — MiniLM embeddings in ChromaDB, falling back to fuzzy metadata
+> search, then to the tag scoring documented here, then to the procedural
+> gradient. Nothing below is wrong; it is just no longer the whole story.
+>
+> **If you are adding backgrounds, read
+> [`assets/broll/README.md`](assets/broll/README.md) first** — it covers how
+> assets are stored, which metadata fields decide whether an asset is ever
+> retrieved, how to build the vector index, and what to reject on review.
+> [`assets/broll/ASSET_PLAN.md`](assets/broll/ASSET_PLAN.md) lists the twelve
+> domains worth covering and what to source for each.
+>
+> ```bash
+> ../.venv/Scripts/python.exe scripts/build_image_library.py --per-category 7
+> ../.venv/Scripts/python.exe scripts/build_visual_index.py --reset
+> ../.venv/Scripts/python.exe scripts/query_visual_index.py "eligible farmers" --compare
+> ```
+>
+> The library and the index are both gitignored, so **each teammate builds
+> their own.** A render that looks different on your machine is usually a
+> different library, not a code change.
+
 ### 10.1 Manifest format
 
 ```json

@@ -131,6 +131,64 @@ EXCLUDE_EXTENSIONS = {".svg", ".pdf", ".gif", ".tif", ".tiff", ".webp"}
 ACCEPTED_LICENCE_PREFIXES = ("public domain", "cc0", "cc-by", "cc by", "pdm", "godl")
 
 
+# Commons file extensions that are video rather than stills. Commons hosts
+# almost no MP4 (it is patent-encumbered); WebM and Ogg Theora are what is
+# actually there, and the compositor reads both through MoviePy/ffmpeg.
+VIDEO_EXTENSIONS = {".webm", ".ogv", ".ogg", ".mp4", ".mov"}
+
+# A background clip has to outlast a scene without an obvious loop, and a
+# scene runs roughly 6-12s. Anything shorter loops visibly; anything longer is
+# a documentary whose download cost buys a few usable seconds.
+MIN_VIDEO_SEC = 4.0
+MAX_VIDEO_SEC = 180.0
+MAX_VIDEO_BYTES = 40 * 1024 * 1024
+
+# Which of the twelve domains in assets/broll/ASSET_PLAN.md each fact category
+# belongs to. Domains are a coarser grouping than the fact category and are
+# what a scene's narration actually sounds like -- a line about "eligible
+# farmer families" is agriculture vocabulary regardless of whether the asset
+# was filed under ELIGIBILITY or BENEFICIARY -- so they widen retrieval
+# without loosening the category filter.
+# Commons video categories per fact category. Kept separate from
+# SOURCE_CATEGORIES because Commons files video under its own tree -- the
+# image categories contain essentially no clips, so pointing --media video at
+# them returns nothing.
+#
+# Each entry below was probed and returned candidates that pass the filters;
+# categories that came back empty ("Videos of farming", "Videos of money",
+# "Videos of schools") are deliberately not listed rather than left in as
+# hopeful guesses.
+#
+# WARNING, from an actual run: what these return is categorically right and
+# contextually useless -- US bank-lobby CCTV for AMOUNT, an ornate Viennese
+# museum clock for DEADLINE, aerial flood-disaster footage for SCHEME_NAME.
+# All were pruned; the flood clip is worse than nothing behind a scheme
+# announcement. Commons has very little video and almost none of it in an
+# Indian government context, so source motion backgrounds from licensed stock
+# instead and hand-write the sidecar. This map is kept because the code path
+# is correct and works the moment it is pointed somewhere better.
+# See assets/broll/README.md.
+VIDEO_SOURCE_CATEGORIES: Dict[str, List[str]] = {
+    "AUTHORITY": ["Category:Videos from India"],
+    "SCHEME_NAME": ["Category:Videos of roads", "Category:Videos from India"],
+    "AMOUNT": ["Category:Videos of banks"],
+    "DEADLINE": ["Category:Videos of clocks"],
+    "ACTION_REQUIRED": ["Category:Videos of banks", "Category:Videos of hospitals"],
+    "ELIGIBILITY": ["Category:Videos of agriculture", "Category:Videos of villages"],
+    "BENEFICIARY": ["Category:Videos of villages", "Category:Videos of agriculture"],
+}
+
+CATEGORY_DOMAINS: Dict[str, List[str]] = {
+    "AUTHORITY": ["governance"],
+    "SCHEME_NAME": ["governance", "rural_development"],
+    "AMOUNT": ["banking_dbt"],
+    "DEADLINE": ["compliance_deadline", "identity_kyc"],
+    "ACTION_REQUIRED": ["identity_kyc", "compliance_deadline"],
+    "ELIGIBILITY": ["agriculture", "rural_development"],
+    "BENEFICIARY": ["rural_development", "women_child"],
+}
+
+
 @dataclass
 class Candidate:
   title: str
@@ -141,6 +199,12 @@ class Candidate:
   mime: str
   licence: str
   artist: str
+  description: str = ""
+  duration: float = 0.0
+
+  @property
+  def is_video(self) -> bool:
+    return Path(self.title).suffix.lower() in VIDEO_EXTENSIONS
 
 
 def _get_json(params: dict, attempts: int = 3, backoff: float = 1.5) -> Optional[dict]:
@@ -165,7 +229,33 @@ def _strip_html(text: str) -> str:
   return re.sub(r"<[^>]+>", "", text or "").strip()
 
 
-def fetch_category_members(category: str, limit: int = 20) -> List[Candidate]:
+def _clean_description(raw: str, title: str) -> str:
+  """Commons ImageDescription, reduced to one usable sentence.
+
+  This is the field retrieval cares about most: it is the only metadata
+  written in prose rather than keywords, so it is the only part phrased the
+  way a narration line is phrased. Uploader descriptions are wildly
+  inconsistent though -- HTML, multilingual blocks, camera settings, whole
+  paragraphs of provenance -- so take the first sentence or two and drop the
+  rest rather than embedding boilerplate that dilutes the vector.
+  """
+  text = _strip_html(raw or "").strip()
+  if not text:
+    return ""
+  # Multilingual descriptions arrive as concatenated language blocks; the
+  # English one is first often enough that truncating beats parsing them.
+  text = re.sub(r"\s+", " ", text)
+  sentences = re.split(r"(?<=[.!?])\s+", text)
+  out = " ".join(sentences[:2]).strip()
+  if len(out) > 300:
+    out = out[:297].rsplit(" ", 1)[0] + "..."
+  # A description that only restates the filename teaches retrieval nothing.
+  if _slug(out) == _slug(Path(title).stem):
+    return ""
+  return out
+
+
+def fetch_category_members(category: str, limit: int = 20, media: str = "image") -> List[Candidate]:
   """Photographs in a Commons category, with size and licence already resolved.
 
   One call gets both membership and imageinfo via a generator, which is why
@@ -191,7 +281,14 @@ def fetch_category_members(category: str, limit: int = 20) -> List[Candidate]:
     title = page.get("title", "")
     if TITLE_EXCLUDE.search(title):
       continue
-    if Path(title).suffix.lower() in EXCLUDE_EXTENSIONS:
+    suffix = Path(title).suffix.lower()
+    if suffix in EXCLUDE_EXTENSIONS:
+      continue
+
+    is_video = suffix in VIDEO_EXTENSIONS
+    if media == "image" and is_video:
+      continue
+    if media == "video" and not is_video:
       continue
 
     infos = page.get("imageinfo") or []
@@ -199,7 +296,17 @@ def fetch_category_members(category: str, limit: int = 20) -> List[Candidate]:
       continue
     info = infos[0]
     width, height = info.get("width", 0), info.get("height", 0)
-    if width < MIN_WIDTH or height < MIN_HEIGHT:
+    # A clip is judged on whether it fills the panel, not on stills-grade
+    # sharpness: 720p footage upscales acceptably where a 720p photo would
+    # not, because motion hides softness.
+    min_w, min_h = (960, 540) if is_video else (MIN_WIDTH, MIN_HEIGHT)
+    if width < min_w or height < min_h:
+      continue
+
+    duration = float(info.get("duration") or 0.0)
+    if is_video and not (MIN_VIDEO_SEC <= duration <= MAX_VIDEO_SEC):
+      # Too short to survive a scene, or a full documentary that would cost
+      # a long download for a few usable seconds.
       continue
 
     meta = info.get("extmetadata", {}) or {}
@@ -208,11 +315,15 @@ def fetch_category_members(category: str, limit: int = 20) -> List[Candidate]:
       continue
 
     artist = _strip_html((meta.get("Artist", {}) or {}).get("value", "")) or "Unknown (see source page)"
+    description = _clean_description(
+        (meta.get("ImageDescription", {}) or {}).get("value", ""), title
+    )
 
     out.append(Candidate(
         title=title, url=info["url"], page=info.get("descriptionurl", ""),
         width=width, height=height, mime=info.get("mime", ""),
         licence=licence, artist=artist,
+        description=description, duration=duration,
     ))
   return out
 
@@ -247,7 +358,7 @@ def extract_title_tags(title: str) -> list[str]:
   return tags
 
 
-def _download_body(url: str, attempts: int = 4) -> Optional[bytes]:
+def _download_body(url: str, attempts: int = 4, max_bytes: int = MAX_BYTES) -> Optional[bytes]:
   """GET the raw bytes with retry/backoff. upload.wikimedia.org is a
   separate endpoint from the API and rate-limits independently — a burst of
   downloads (this script, or a prior debugging session against the same IP)
@@ -266,7 +377,7 @@ def _download_body(url: str, attempts: int = 4) -> Optional[bytes]:
         body = b""
         for chunk in r.iter_content(64 * 1024):
           body += chunk
-          if len(body) > MAX_BYTES:
+          if len(body) > max_bytes:
             return None
         return body
     except Exception:
@@ -274,7 +385,55 @@ def _download_body(url: str, attempts: int = 4) -> Optional[bytes]:
   return None
 
 
+def _write_sidecar(out_path: Path, c: Candidate, category: str) -> None:
+  tags = list(dict.fromkeys(CATEGORY_BASE_TAGS.get(category, []) + extract_title_tags(c.title)))
+  out_path.with_suffix(".source.json").write_text(
+      json.dumps({
+          "category": category,
+          "commons_title": c.title,
+          "description": c.description,
+          "domains": CATEGORY_DOMAINS.get(category, []),
+          "media_type": "video" if c.is_video else "image",
+          "image_url": c.url,
+          "source_page": c.page,
+          "licence": c.licence,
+          "artist": c.artist,
+          "width": c.width,
+          "height": c.height,
+          "duration_sec": round(c.duration, 3),
+          "tags": tags,
+      }, indent=2, ensure_ascii=False),
+      encoding="utf-8",
+  )
+
+
+def download_video_candidate(c: Candidate, category: str, out_dir: Path) -> Optional[Path]:
+  """Save a Commons clip as-is, without transcoding.
+
+  The compositor already decodes whatever ffmpeg can read, so re-encoding
+  here would cost a generation of quality to solve a problem nothing has.
+  """
+  body = _download_body(c.url, max_bytes=MAX_VIDEO_BYTES)
+  if body is None:
+    return None
+
+  ext = Path(c.title).suffix.lower() or ".webm"
+  out_path = out_dir / f"{_slug(Path(c.title).stem)}{ext}"
+  try:
+    out_path.write_bytes(body)
+  except OSError as exc:
+    safe_title = c.title[:60].encode("ascii", "replace").decode("ascii")
+    print(f"    ! {safe_title}: {exc}")
+    return None
+
+  _write_sidecar(out_path, c, category)
+  return out_path
+
+
 def download_candidate(c: Candidate, category: str, out_dir: Path) -> Optional[Path]:
+  if c.is_video:
+    return download_video_candidate(c, category, out_dir)
+
   from PIL import Image
 
   body = _download_body(c.url)
@@ -299,28 +458,14 @@ def download_candidate(c: Candidate, category: str, out_dir: Path) -> Optional[P
     print(f"    ! {safe_title}: {exc}")
     return None
 
-  tags = list(dict.fromkeys(CATEGORY_BASE_TAGS.get(category, []) + extract_title_tags(c.title)))
-
-  out_path.with_suffix(".source.json").write_text(
-      json.dumps({
-          "category": category,
-          "commons_title": c.title,
-          "image_url": c.url,
-          "source_page": c.page,
-          "licence": c.licence,
-          "artist": c.artist,
-          "width": c.width,
-          "height": c.height,
-          "tags": tags,
-      }, indent=2, ensure_ascii=False),
-      encoding="utf-8",
-  )
+  _write_sidecar(out_path, c, category)
   return out_path
 
 
-def build(per_category: int) -> Dict[str, List[Path]]:
+def build(per_category: int, media: str = "image") -> Dict[str, List[Path]]:
   results: Dict[str, List[Path]] = {}
-  for category, commons_cats in SOURCE_CATEGORIES.items():
+  source_map = VIDEO_SOURCE_CATEGORIES if media == "video" else SOURCE_CATEGORIES
+  for category, commons_cats in source_map.items():
     out_dir = LIBRARY_DIR / category
     out_dir.mkdir(parents=True, exist_ok=True)
     saved: List[Path] = []
@@ -328,7 +473,7 @@ def build(per_category: int) -> Dict[str, List[Path]]:
     seen_titles = set()
     pool: List[Candidate] = []
     for cc in commons_cats:
-      for c in fetch_category_members(cc, limit=per_category * 3):
+      for c in fetch_category_members(cc, limit=per_category * 3, media=media):
         if c.title not in seen_titles:
           seen_titles.add(c.title)
           pool.append(c)
@@ -339,10 +484,14 @@ def build(per_category: int) -> Dict[str, List[Path]]:
     for c in pool:
       if len(saved) >= per_category:
         break
-      existing = out_dir / f"{_slug(Path(c.title).stem)}.jpg"
-      existing_png = existing.with_suffix(".png")
-      if existing.is_file() or existing_png.is_file():
-        saved.append(existing if existing.is_file() else existing_png)
+      stem = _slug(Path(c.title).stem)
+      already = next(
+          (out_dir / f"{stem}{ext}" for ext in (".jpg", ".png", *VIDEO_EXTENSIONS)
+           if (out_dir / f"{stem}{ext}").is_file()),
+          None,
+      )
+      if already is not None:
+        saved.append(already)
         continue
       path = download_candidate(c, category, out_dir)
       if path is not None:
@@ -386,9 +535,14 @@ def contact_sheet(results: Dict[str, List[Path]], out_path: Path) -> None:
 
 
 def retag_library() -> int:
-  """Recompute the "tags" field of every existing .source.json sidecar under
-  LIBRARY_DIR from its own recorded category/commons_title, without touching
-  the network or any other key in the sidecar."""
+  """Recompute the derived fields of every existing .source.json sidecar from
+  its own recorded category/commons_title, without touching the network.
+
+  Backfills sidecars written before `domains` and `media_type` existed, so
+  assets already on disk gain them without being re-downloaded. `description`
+  is deliberately left alone: it can only come from Commons or from a human,
+  so an empty one stays empty rather than being filled with a guess.
+  """
   count = 0
   for sidecar in sorted(LIBRARY_DIR.rglob("*.source.json")):
     try:
@@ -401,11 +555,23 @@ def retag_library() -> int:
     title = data.get("commons_title", "")
     tags = list(dict.fromkeys(CATEGORY_BASE_TAGS.get(category, []) + extract_title_tags(title)))
     data["tags"] = tags
+    data.setdefault("description", "")
+    data["domains"] = CATEGORY_DOMAINS.get(category, [])
+
+    if "media_type" not in data:
+      media_path = next(
+          (p for p in sidecar.parent.iterdir()
+           if p.stem == sidecar.name.removesuffix(".source.json") and not p.name.endswith(".json")),
+          None,
+      )
+      suffix = media_path.suffix.lower() if media_path else ""
+      data["media_type"] = "video" if suffix in VIDEO_EXTENSIONS else "image"
 
     sidecar.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     count += 1
     rel = sidecar.relative_to(LIBRARY_DIR)
-    print(f"retagged: {rel.as_posix()} -> {tags}")
+    missing = "" if data.get("description") else "   (no description - add one by hand)"
+    print(f"retagged: {rel.as_posix()} -> domains={data['domains']} tags={len(tags)}{missing}")
 
   print(f"=== retagged {count} sidecar(s) under {LIBRARY_DIR} ===")
   return 0
@@ -415,7 +581,10 @@ def main() -> int:
   p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   p.add_argument("--per-category", type=int, default=DEFAULT_PER_CATEGORY)
   p.add_argument("--contact-sheet-only", action="store_true", help="skip fetching, just re-render the sheet")
-  p.add_argument("--retag", action="store_true", help="recompute tags in existing .source.json sidecars, offline, no fetching")
+  p.add_argument("--retag", action="store_true", help="recompute tags/domains in existing .source.json sidecars, offline, no fetching")
+  p.add_argument("--media", choices=["image", "video", "both"], default="image",
+                 help="what to fetch. 'video' pulls Commons b-roll (WebM/Ogg); "
+                      "Commons has far fewer clips than stills, so expect thin results")
   args = p.parse_args()
 
   if args.retag:
@@ -427,9 +596,14 @@ def main() -> int:
         for d in LIBRARY_DIR.iterdir() if d.is_dir()
     } if LIBRARY_DIR.is_dir() else {}
   else:
-    results = build(args.per_category)
+    if args.media == "both":
+      results = build(args.per_category, media="image")
+      for category, paths in build(args.per_category, media="video").items():
+        results.setdefault(category, []).extend(paths)
+    else:
+      results = build(args.per_category, media=args.media)
     total = sum(len(v) for v in results.values())
-    print(f"=== {total} images across {len(results)} categories ===")
+    print(f"=== {total} assets across {len(results)} categories ===")
 
   contact_sheet(results, BACKEND_ROOT / "out" / "inspect" / "image_library_sheet.png")
   return 0
