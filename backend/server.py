@@ -35,6 +35,7 @@ Path("static/audio").mkdir(parents=True, exist_ok=True)
 Path("static/videos").mkdir(parents=True, exist_ok=True)
 
 from api.routes.upload import router as upload_router
+from api.routes.warmup import router as warmup_router
 
 app = FastAPI(
     title="IndicGov-Sentinel Server",
@@ -42,6 +43,7 @@ app = FastAPI(
 )
 
 app.include_router(upload_router)
+app.include_router(warmup_router)
 
 app.add_middleware(
     CORSMiddleware,

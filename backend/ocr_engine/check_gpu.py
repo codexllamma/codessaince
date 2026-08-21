@@ -1,4 +1,8 @@
+import sys
 import paddle
+
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 print("--- PADDLEPADDLE GPU DIAGNOSTIC ---")
 print(f"Paddle Version: {paddle.__version__}")
